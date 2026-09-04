@@ -1,7 +1,7 @@
 [project]
 name = "armasec-lite"
 version = "0.1.0"
-description = "Injectable FastAPI auth via OIDC, with two dependencies"
+description = "Injectable FastAPI auth via OIDC, with three dependencies"
 authors = [{name = "Vantage Compute", email = "info@vantagecompute.ai"}]
 license = {text = "MIT"}
 readme = "README.md"
@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     "fastapi>=0.141.1,<1",
     "cryptography>=50.0.1,<51",
+    "pydantic>=2.13.5,<3",
 ]
 
 [project.urls]

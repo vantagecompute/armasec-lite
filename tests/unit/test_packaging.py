@@ -11,7 +11,6 @@ BANNED_RUNTIME_IMPORTS = {
     "auto_name_enum",
     "pluggy",
     "respx",
-    "pydantic",
     "httpx",
 }
 
@@ -20,11 +19,20 @@ def test_version_is_exposed():
     assert armasec_lite.__version__ == importlib.metadata.version("armasec-lite")
 
 
-def test_runtime_dependencies_are_exactly_two():
+def test_runtime_dependencies_are_exactly_three():
+    """
+    Guard rail against dependency creep.
+
+    The runtime dependency count is fixed at three: fastapi, cryptography, and
+    pydantic (declared because fastapi imports it unconditionally in every install
+    regardless of what this project declares). This test is what stops a future task
+    from quietly adding a fourth, which is the exact failure mode armasec-lite exists
+    to prevent.
+    """
     requires = importlib.metadata.requires("armasec-lite") or []
     runtime = [r for r in requires if "extra ==" not in r]
     names = sorted(r.split(" ")[0].split(">")[0].split("<")[0].split("=")[0] for r in runtime)
-    assert names == ["cryptography", "fastapi"]
+    assert names == ["cryptography", "fastapi", "pydantic"]
 
 
 def test_armasec_lite_source_imports_no_banned_module():
@@ -62,13 +70,12 @@ def test_importing_armasec_lite_does_not_load_banned_modules():
     Importing the package in a clean interpreter must not pull in a removed dependency.
 
     Runs in a subprocess because this test process already has pytest's own imports
-    loaded. pydantic is excluded from the assertion: fastapi imports it unconditionally,
-    so its presence is a fact about fastapi, not about armasec_lite.
+    loaded.
     """
     import subprocess
     import sys
 
-    banned = sorted(BANNED_RUNTIME_IMPORTS - {"pydantic"})
+    banned = sorted(BANNED_RUNTIME_IMPORTS)
     code = (
         "import sys, json, armasec_lite; "
         f"print(json.dumps([m for m in {banned!r} if m in sys.modules]))"
