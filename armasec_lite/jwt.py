@@ -13,11 +13,19 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import hmac
 import json
 import re
 from typing import Any
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
+from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+
 from armasec_lite.exceptions import AuthenticationError
+from armasec_lite.schemas import JWK
 
 
 class InvalidTokenError(AuthenticationError):
@@ -140,3 +148,167 @@ def get_unverified_header(token: str) -> dict[str, Any]:
     """
     header_segment, _, _ = split_token(token)
     return _decode_json_segment(header_segment, "header")
+
+
+#: Hash for each algorithm suffix. EdDSA carries its own hash internally.
+_HASHES: dict[str, Any] = {
+    "256": hashes.SHA256,
+    "384": hashes.SHA384,
+    "512": hashes.SHA512,
+}
+
+#: Curve and coordinate size for each ECDSA algorithm. Taken from the ALGORITHM, never
+#: from the JWK's `crv`, so a hostile JWKS cannot substitute a weaker curve.
+_EC_CURVES: dict[str, tuple[Any, int]] = {
+    "ES256": (ec.SECP256R1, 32),
+    "ES384": (ec.SECP384R1, 48),
+    "ES512": (ec.SECP521R1, 66),
+}
+
+#: The key type each algorithm family requires. Enforcing this is what blocks signing
+#: with HS256 using an RSA public key as the HMAC secret.
+_REQUIRED_KTY: dict[str, str] = {
+    "RS": "RSA",
+    "PS": "RSA",
+    "ES": "EC",
+    "HS": "oct",
+    "Ed": "OKP",
+}
+
+SUPPORTED_ALGORITHMS: frozenset[str] = frozenset(
+    [f"{family}{size}" for family in ("RS", "PS", "ES", "HS") for size in ("256", "384", "512")]
+    + ["EdDSA"]
+)
+
+
+def _required_member(jwk: JWK, name: str) -> str:
+    """
+    Pull a required JWK member or raise naming it.
+
+    Args:
+        jwk:  The key to read.
+        name: The member name, such as "n" or "crv".
+    """
+    value = getattr(jwk, name, None)
+    if not isinstance(value, str) or value == "":
+        raise InvalidKeyError(f"JWK of type {jwk.kty!r} is missing required member {name!r}")
+    return value
+
+
+def _b64url_int(jwk: JWK, name: str) -> int:
+    """
+    Decode a base64url big-endian integer member of a JWK.
+
+    Args:
+        jwk:  The key to read.
+        name: The member name.
+    """
+    return int.from_bytes(b64url_decode(_required_member(jwk, name)), "big")
+
+
+def _check_kty(algorithm: str, jwk: JWK) -> None:
+    """
+    Require the JWK's key type to match the algorithm family.
+
+    Args:
+        algorithm: The algorithm named in the token header, already allowlisted.
+        jwk:       The key selected by `kid`.
+    """
+    required = _REQUIRED_KTY[algorithm[:2]]
+    if jwk.kty != required:
+        raise InvalidAlgorithmError(
+            f"Algorithm {algorithm!r} requires a key with kty {required!r}, "
+            f"but the JWK has kty {jwk.kty!r}"
+        )
+
+
+def _rsa_public_key(jwk: JWK) -> rsa.RSAPublicKey:
+    """Build an RSA public key from a JWK's `n` and `e`."""
+    return rsa.RSAPublicNumbers(e=_b64url_int(jwk, "e"), n=_b64url_int(jwk, "n")).public_key()
+
+
+def _ec_public_key(algorithm: str, jwk: JWK) -> ec.EllipticCurvePublicKey:
+    """Build an EC public key, taking the curve from the algorithm."""
+    curve_cls, _ = _EC_CURVES[algorithm]
+    x_raw = b64url_decode(_required_member(jwk, "x"))
+    y_raw = b64url_decode(_required_member(jwk, "y"))
+    return ec.EllipticCurvePublicNumbers(
+        x=int.from_bytes(x_raw, "big"),
+        y=int.from_bytes(y_raw, "big"),
+        curve=curve_cls(),
+    ).public_key()
+
+
+def verify_signature(
+    algorithm: str,
+    jwk: JWK,
+    signing_input: bytes,
+    signature: bytes,
+) -> None:
+    """
+    Verify a JWS signature, raising on any failure.
+
+    The caller must already have checked `algorithm` against its own allowlist. This
+    function additionally requires the JWK's key type to match the algorithm family, so a
+    key of the wrong kind cannot be pressed into service by a token that asks for it.
+
+    Args:
+        algorithm:     The algorithm from the token header, already allowlisted.
+        jwk:           The key selected by the token's `kid`.
+        signing_input: The ASCII bytes of "<header_b64>.<payload_b64>".
+        signature:     The decoded signature bytes.
+    """
+    if algorithm not in SUPPORTED_ALGORITHMS:
+        raise InvalidAlgorithmError(f"Algorithm {algorithm!r} is not supported")
+
+    _check_kty(algorithm, jwk)
+
+    if algorithm.startswith("HS"):
+        digest = getattr(hashlib, f"sha{algorithm[2:]}")
+        secret = b64url_decode(_required_member(jwk, "k"))
+        expected = hmac.new(secret, signing_input, digest).digest()
+        if not hmac.compare_digest(expected, signature):
+            raise InvalidSignatureError("Token signature did not verify")
+        return
+
+    if algorithm == "EdDSA":
+        crv = _required_member(jwk, "crv")
+        if crv != "Ed25519":
+            raise InvalidAlgorithmError(f"EdDSA curve {crv!r} is not supported")
+        key = ed25519.Ed25519PublicKey.from_public_bytes(b64url_decode(_required_member(jwk, "x")))
+        try:
+            key.verify(signature, signing_input)
+        except InvalidSignature as err:
+            raise InvalidSignatureError("Token signature did not verify") from err
+        return
+
+    hash_alg = _HASHES[algorithm[2:]]()
+
+    if algorithm.startswith("ES"):
+        _, coord_bytes = _EC_CURVES[algorithm]
+        # JWS carries ECDSA signatures as raw r||s. Checking the length before decoding
+        # rejects both DER-wrapped and truncated signatures outright.
+        if len(signature) != coord_bytes * 2:
+            raise InvalidSignatureError(
+                f"ECDSA signature has length {len(signature)}, expected {coord_bytes * 2}"
+            )
+        r = int.from_bytes(signature[:coord_bytes], "big")
+        s = int.from_bytes(signature[coord_bytes:], "big")
+        try:
+            _ec_public_key(algorithm, jwk).verify(
+                encode_dss_signature(r, s), signing_input, ec.ECDSA(hash_alg)
+            )
+        except InvalidSignature as err:
+            raise InvalidSignatureError("Token signature did not verify") from err
+        return
+
+    pad: Any
+    if algorithm.startswith("PS"):
+        pad = padding.PSS(mgf=padding.MGF1(hash_alg), salt_length=hash_alg.digest_size)
+    else:
+        pad = padding.PKCS1v15()
+
+    try:
+        _rsa_public_key(jwk).verify(signature, signing_input, pad, hash_alg)
+    except InvalidSignature as err:
+        raise InvalidSignatureError("Token signature did not verify") from err
