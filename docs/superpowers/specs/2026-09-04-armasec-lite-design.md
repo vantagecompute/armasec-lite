@@ -485,11 +485,44 @@ config fetch and one JWKS fetch; ten distinct `lockdown()` scope sets against on
 produce two HTTP calls total; a rotated `kid` triggers exactly one refetch and a second
 unknown `kid` within the interval triggers none.
 
+## Differences from upstream
+
+This is the authoritative list. The README's migration section and the docs site's
+migration page both derive from it, and neither may add to it or contradict it.
+
+An earlier draft of this spec claimed there were "two differences that can change behavior
+on upgrade". That was wrong, and it under-counted the most disruptive one. Replacing
+pydantic with dataclasses is not an internal detail: it is visible to every consumer that
+touches a `TokenPayload` or a `DomainConfig`.
+
+**Requires action from an integrator:**
+
+| Difference | What breaks | Fix |
+| --- | --- | --- |
+| Import name is `armasec_lite` | Every import line | A scoped `sed` over the project's own sources |
+| `verify_issuer` defaults to `True` | Routes 401 when the provider's discovery `issuer` does not exactly match the `iss` it mints, most often over a trailing slash | Correct the provider, or `DomainConfig(verify_issuer=False)` |
+| `schemas` and `token_payload` are dataclasses, not pydantic models | `TokenPayload.model_dump()`, `.dict()`, `.json()`, `DomainConfig.model_validate()`, using either as a FastAPI `response_model`, and `except pydantic.ValidationError` | `to_dict()` is preserved. Anything else needs rewriting against plain attributes |
+| Errors no longer derive from py-buzz | `except buzz.Buzz` stops catching `ArmasecError` | Catch `armasec_lite.exceptions.ArmasecError` |
+| The pytest fixtures live behind the `[test]` extra | A ported test suite cannot import the fixtures from a plain install, because upstream forced `pytest` into every install and this does not | Depend on `armasec-lite[test]` |
+| The OIDC loader cache is process-wide | Tests that expect per-instance provider state now share it | `openid_config_loader.clear_cache()`, or the `mock_openid_server` fixture, which calls it automatically |
+| The CLI is not included | `armasec` console script is gone | Out of scope; see Non-goals |
+
+**Requires no action, listed so the API diff is complete:**
+
+| Difference | Why it is safe |
+| --- | --- |
+| `TokenDecoder` gained an optional `jwks_refresher` keyword argument | Purely additive; the first positional argument is still `JWKs`, so existing construction sites are unaffected |
+
+Upstream armasec **3.x** is the migration source. Migrating from 2.x is out of scope and
+untested; a 2.x consumer should upgrade to 3.x first and confirm their application works.
+Dependency floors of the form `armasec>=2.0.0` admit both majors, so a reader should check
+what they actually resolved rather than trusting the floor.
+
 ## Documentation
 
 - `README.md`: the upstream quickstart, adjusted for the import name, plus a dependency
-  comparison table and a migration section covering the two differences that can change
-  behavior on upgrade (import name, `verify_issuer` default).
+  comparison table and a migration section covering the "Differences from upstream" table
+  above.
 - `examples/`: `basic.py`, `two_domains.py`, `match_key_value_pairs.py` and `plugin.py`
   ported from upstream. The plugin example drops its `loguru` and `pydantic` imports.
 - Docstrings on all public API, matching upstream's style, since they are the API
