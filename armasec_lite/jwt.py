@@ -21,9 +21,12 @@ import time
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
-from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
+    encode_dss_signature,
+)
 
 from armasec_lite.exceptions import AuthenticationError
 from armasec_lite.schemas import JWK
@@ -440,3 +443,71 @@ def decode(
             raise InvalidIssuerError(f"Token issuer {token_issuer!r} does not match {issuer!r}")
 
     return claims
+
+
+def _sign(algorithm: str, key: bytes | str, signing_input: bytes) -> bytes:
+    """
+    Produce a JWS signature. Used by `encode`, which is a testing aid.
+
+    Args:
+        algorithm:     The JWS algorithm to sign with.
+        key:           PEM private key bytes, or raw secret bytes for HS algorithms.
+        signing_input: The ASCII bytes of "<header_b64>.<payload_b64>".
+    """
+    if algorithm.startswith("HS"):
+        secret = key.encode() if isinstance(key, str) else key
+        digest = getattr(hashlib, f"sha{algorithm[2:]}")
+        return hmac.new(secret, signing_input, digest).digest()
+
+    pem = key.encode() if isinstance(key, str) else key
+    private = serialization.load_pem_private_key(pem, password=None)
+
+    if algorithm == "EdDSA":
+        assert isinstance(private, ed25519.Ed25519PrivateKey)
+        return private.sign(signing_input)
+
+    hash_alg = _HASHES[algorithm[2:]]()
+
+    if algorithm.startswith("ES"):
+        assert isinstance(private, ec.EllipticCurvePrivateKey)
+        _, coord_bytes = _EC_CURVES[algorithm]
+        der = private.sign(signing_input, ec.ECDSA(hash_alg))
+        r, s = decode_dss_signature(der)
+        return r.to_bytes(coord_bytes, "big") + s.to_bytes(coord_bytes, "big")
+
+    assert isinstance(private, rsa.RSAPrivateKey)
+    if algorithm.startswith("PS"):
+        pad: Any = padding.PSS(mgf=padding.MGF1(hash_alg), salt_length=hash_alg.digest_size)
+    else:
+        pad = padding.PKCS1v15()
+    return private.sign(signing_input, pad, hash_alg)
+
+
+def encode(
+    claims: dict[str, Any],
+    key: bytes | str,
+    algorithm: str,
+    headers: dict[str, Any] | None = None,
+) -> str:
+    """
+    Sign a set of claims into a compact JWS.
+
+    This is a testing aid. It exists so that the pytest extension can build tokens without
+    pulling in a second signing library, and it is never used on the request path. Do not
+    build production tokens with it; this library is a validator.
+
+    Args:
+        claims:    The payload to sign.
+        key:       PEM private key bytes, or the raw secret for an HS algorithm.
+        algorithm: The JWS algorithm to sign with.
+        headers:   Additional header members, such as `kid`.
+    """
+    if algorithm not in SUPPORTED_ALGORITHMS:
+        raise InvalidAlgorithmError(f"Algorithm {algorithm!r} is not supported")
+
+    header = {"typ": "JWT", **(headers or {}), "alg": algorithm}
+    header_b64 = b64url_encode(json.dumps(header, separators=(",", ":")).encode())
+    payload_b64 = b64url_encode(json.dumps(claims, separators=(",", ":")).encode())
+    signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+    signature = _sign(algorithm, key, signing_input)
+    return f"{header_b64}.{payload_b64}.{b64url_encode(signature)}"
