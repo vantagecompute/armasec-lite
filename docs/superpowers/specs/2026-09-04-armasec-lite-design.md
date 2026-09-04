@@ -66,6 +66,12 @@ implementation.
    `threading.Lock`, with rate-limited JWKS refetch on unknown `kid`.
 5. **No performance number is hand-authored.** Every figure in the documentation site is
    generated from a committed benchmark result file. See the Benchmarks section.
+6. **This repository contains no `infra/` directory and deploys no AWS resources.** The
+   spoke deploy role is created by the `vantage-docs` hub stack from its own `spokes`
+   context, so registering there is the whole of the infrastructure work. `vantage-mcp-infra`
+   carries CDK because it deploys Lambdas, DynamoDB and a CloudFront distribution;
+   `armasec-lite` is a library with no runtime AWS footprint, and PyPI publishing uses
+   trusted publishing, which needs no AWS role. A CDK app here would deploy nothing.
 
 ## Architecture
 
@@ -656,10 +662,10 @@ reach Docker. Integration tests run only when asked for.
 
 ### Results and provenance
 
-Written to `tests/integration/results/*.json` and committed. Each file records UTC
+Written to `legacy_comparison_compose/results/*.json` and committed. Each file records UTC
 timestamp, hostname, CPU model, kernel, Docker version, container resource limits,
 repetition count, and the resolved versions of both libraries. `benchmarks/bench/charts.py`
-reads from both `benchmarks/results/` and `tests/integration/results/`.
+reads from both `benchmarks/results/` and `legacy_comparison_compose/results/`.
 
 Numbers from this harness describe one machine running Docker, and the docs say so. The
 ratios between the two arms are the meaningful part, not the absolute milliseconds.
@@ -726,12 +732,12 @@ Charts:
 | Dependency count and installed size | Grouped bar | `benchmarks/results/footprint.json` |
 | Container image size | Bar | `benchmarks/results/footprint.json` |
 | Source lines of code shipped | Grouped bar | `benchmarks/results/footprint.json` |
-| Cold-start latency versus concurrency | Grouped bar, p50 and p95 | `integration/results/s1_cold_start.json` |
-| OIDC requests per lockdown scope set | Bar | `integration/results/s2_scope_sets.json` |
-| Warm steady-state throughput and latency | Grouped bar | `integration/results/s3_warm.json` |
-| `/health` latency during cold auth load | Line over time | `integration/results/s4_loop_block.json` |
-| Cold start versus provider latency | Line | `integration/results/s5_provider_latency.json` |
-| Errors and recovery after key rotation | Line over time | `integration/results/s6_rotation.json` |
+| Cold-start latency versus concurrency | Grouped bar, p50 and p95 | `legacy_comparison_compose/results/s1_cold_start.json` |
+| OIDC requests per lockdown scope set | Bar | `legacy_comparison_compose/results/s2_scope_sets.json` |
+| Warm steady-state throughput and latency | Grouped bar | `legacy_comparison_compose/results/s3_warm.json` |
+| `/health` latency during cold auth load | Line over time | `legacy_comparison_compose/results/s4_loop_block.json` |
+| Cold start versus provider latency | Line | `legacy_comparison_compose/results/s5_provider_latency.json` |
+| Errors and recovery after key rotation | Line over time | `legacy_comparison_compose/results/s6_rotation.json` |
 | Security posture by attack vector | Heatmap | `benchmarks/results/security_matrix.json` |
 
 The S4 chart is the headline. Plotting unauthenticated `/health` latency on a time axis,
@@ -773,7 +779,7 @@ repositories.
 4. Run scenarios S1 through S7, interleaving legacy and lite arms, restarting app
    containers between cold-start repetitions.
 5. Run `test_parity.py` against the live stack.
-6. Write result JSON into `tests/integration/results/`.
+6. Write result JSON into `legacy_comparison_compose/results/`.
 7. `docker compose down -v`.
 8. Regenerate the Plotly specs in `docusaurus/static/charts/`.
 9. Print a summary table to the terminal, so the run is useful without opening the docs.
@@ -781,6 +787,53 @@ repositories.
 The recipe fails if any scenario fails, if a parity test fails, or if a result file would
 be written with a missing series. A partially successful run must not silently publish a
 partial chart.
+
+### Hub registration
+
+The docs site is a spoke under `docs.vantagecompute.ai/developer/armasec-lite/`, following
+the arrangement `vantage-mcp-infra` uses. Registration is a pull request against
+`vantage-docs`, not infrastructure in this repository.
+
+**`vantage-docs/.developer-subsites`**: append `armasec-lite`. This excludes the subtree
+from the hub's own `deploy-developer` sync, so the hub's `--delete` cannot remove spoke
+content.
+
+**`vantage-docs/infra/cdk.json`**: append to `context.config.spokes`:
+
+```json
+{ "name": "armasec-lite", "repo": "armasec-lite", "repo_id": "1357572183" }
+```
+
+The numeric `repo_id` is confirmed from the GitHub API for `vantagecompute/armasec-lite`.
+GitHub is moving OIDC subjects from repository names to ids, so a role naming only the old
+form is refused with an error that does not say which half mismatched.
+
+`vantage-docs/infra/lambda/auth/config.json` also carries a `spoke_names` list, but it is
+**generated** by `infra/stacks/docs_stack.py` from the `spokes` context above. Editing it by
+hand would be overwritten on the next synth.
+
+Adding those two entries is what brings the `vantage-docs-spoke-armasec-lite` deploy role
+into existence, scoped to `developer/armasec-lite/*`. The hub stack creates it; this
+repository deploys nothing.
+
+### Deploy workflow
+
+`.github/workflows/deploy-docs.yml`, ported from `vantage-mcp-infra`. Triggers on `v*`
+tags and `workflow_dispatch`. Checks out submodules over HTTPS (the `.gitmodules` entry
+records an SSH URL that a runner has no key for), installs Node 24, builds the Docusaurus
+site, assumes `secrets.DOCS_SPOKE_ROLE_ARN` via OIDC, syncs to
+`s3://$DOCS_BUCKET/developer/armasec-lite/` with `--delete`, and invalidates
+`/developer/armasec-lite/*`.
+
+`--delete` is safe here for the same reason it is safe for every other spoke: the hub
+excludes this subtree from its own sync, so this repository owns it alone.
+
+Required repository variables: `DOCS_BUCKET`, `DOCS_CF_DISTRIBUTION_ID`. Required secret:
+`DOCS_SPOKE_ROLE_ARN`.
+
+The workflow additionally fails the build if the generated API reference is incomplete,
+counting generated pages against the module list declared in `docusaurus.config.ts`, so a
+renamed or moved module cannot silently drop pages from the site.
 
 ### Test results page
 
