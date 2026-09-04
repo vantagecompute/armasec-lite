@@ -17,6 +17,7 @@ import hashlib
 import hmac
 import json
 import re
+import time
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
@@ -88,12 +89,14 @@ def b64url_decode(segment: str) -> bytes:
     if not _B64URL_RE.match(segment):
         raise InvalidTokenError("Token segment contains a character outside base64url")
 
-    padding = -len(segment) % 4
-    if padding == 3:
+    # Named pad_len rather than padding, because `padding` at module scope is
+    # cryptography's RSA padding module and shadowing it here would be a trap.
+    pad_len = -len(segment) % 4
+    if pad_len == 3:
         raise InvalidTokenError("Token segment has an impossible base64url length")
 
     try:
-        return base64.urlsafe_b64decode(segment + "=" * padding)
+        return base64.urlsafe_b64decode(segment + "=" * pad_len)
     except (binascii.Error, ValueError) as err:
         raise InvalidTokenError(f"Token segment is not valid base64url: {err}") from err
 
@@ -312,3 +315,128 @@ def verify_signature(
         _rsa_public_key(jwk).verify(signature, signing_input, pad, hash_alg)
     except InvalidSignature as err:
         raise InvalidSignatureError("Token signature did not verify") from err
+
+
+#: Options `decode` understands, with their defaults. Anything else is ignored, matching
+#: the permissive behavior callers expect from a jose-shaped API.
+_DEFAULT_OPTIONS: dict[str, bool] = {
+    "verify_signature": True,
+    "verify_exp": True,
+    "verify_nbf": True,
+    "verify_aud": True,
+    "verify_iss": True,
+}
+
+
+def _numeric_claim(claims: dict[str, Any], name: str) -> float | None:
+    """
+    Read a NumericDate claim, rejecting values that are not numbers.
+
+    Args:
+        claims: The decoded payload.
+        name:   The claim name.
+    """
+    if name not in claims:
+        return None
+    value = claims[name]
+    # bool is an int subclass, and a boolean timestamp is always a malformed token.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidTokenError(f"Token claim {name!r} is not a number")
+    return float(value)
+
+
+def decode(
+    token: str,
+    jwk: JWK,
+    algorithms: list[str],
+    *,
+    audience: str | None = None,
+    issuer: str | None = None,
+    options: dict[str, bool] | None = None,
+    leeway: float = 0.0,
+) -> dict[str, Any]:
+    """
+    Decode and fully validate a JWT, returning its claims.
+
+    The order of operations below is a security property. In particular the algorithm is
+    taken from the caller's allowlist rather than from the token, the key type is checked
+    against the algorithm, and the signature is verified before any claim is trusted.
+
+    Args:
+        token:      The compact serialization to decode.
+        jwk:        The key to verify against, already selected by `kid`.
+        algorithms: The permitted algorithms. The token's own `alg` must appear here.
+        audience:   Required audience. When None, `aud` is not checked.
+        issuer:     Required issuer. When None, `iss` is not checked.
+        options:    Toggles for individual checks, such as `{"verify_aud": False}`.
+        leeway:     Seconds of clock skew tolerated on `exp` and `nbf`.
+    """
+    opts = {**_DEFAULT_OPTIONS, **(options or {})}
+
+    # 1. Structure. A malformed token never reaches a cryptographic operation.
+    #    The one shape singled out here is "<header>.<payload>." with an empty signature,
+    #    which is the RFC 7515 unsecured JWS. It is a structurally valid serialization
+    #    carrying no signature at all, so it belongs to the algorithm rule in step 2 and
+    #    is reported as such rather than as a generic malformed token.
+    parts = token.split(".") if isinstance(token, str) else []
+    if len(parts) == 3 and all(parts[:2]) and parts[2] == "":
+        raise InvalidAlgorithmError("Unsecured JWS is not permitted for this route")
+
+    header_b64, payload_b64, signature_b64 = split_token(token)
+    header = _decode_json_segment(header_b64, "header")
+
+    # 2. Algorithm allowlist. Read from the CALLER's list, never from the token. This is
+    #    the `alg: none` and algorithm-confusion defense and it must stay first.
+    algorithm = header.get("alg")
+    if not isinstance(algorithm, str):
+        raise InvalidAlgorithmError("Token header has no 'alg'")
+    if algorithm not in algorithms:
+        raise InvalidAlgorithmError(f"Algorithm {algorithm!r} is not permitted for this route")
+
+    # 3. Unrecognized critical headers must be refused (RFC 7515 section 4.1.11). We
+    #    understand none, so any `crit` entry at all is a refusal.
+    crit = header.get("crit")
+    if crit is not None:
+        if not isinstance(crit, list):
+            raise InvalidTokenError("Token header 'crit' is not a list")
+        raise InvalidTokenError(f"Token header 'crit' names unsupported extensions: {crit}")
+
+    # 4. Signature, before any claim is read. Step 3 of verify_signature also requires the
+    #    JWK's kty to match the algorithm family.
+    if opts["verify_signature"]:
+        signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+        verify_signature(algorithm, jwk, signing_input, b64url_decode(signature_b64))
+
+    # 5. Only now are the claims worth reading.
+    claims = _decode_json_segment(payload_b64, "payload")
+    now = time.time()
+
+    expire = _numeric_claim(claims, "exp")
+    if opts["verify_exp"] and expire is not None and now > expire + leeway:
+        raise ExpiredSignatureError("Token has expired")
+
+    not_before = _numeric_claim(claims, "nbf")
+    if opts["verify_nbf"] and not_before is not None and now < not_before - leeway:
+        raise ImmatureSignatureError("Token is not yet valid")
+
+    # Parsed for type validity even though it is not used to reject, matching jose.
+    _numeric_claim(claims, "iat")
+
+    if opts["verify_aud"] and audience is not None:
+        raw_audience = claims.get("aud")
+        if raw_audience is None:
+            raise InvalidAudienceError("Token is missing the 'aud' claim")
+        allowed = raw_audience if isinstance(raw_audience, list) else [raw_audience]
+        if audience not in allowed:
+            raise InvalidAudienceError(
+                f"Token audience {raw_audience!r} does not match {audience!r}"
+            )
+
+    if opts["verify_iss"] and issuer is not None:
+        token_issuer = claims.get("iss")
+        if token_issuer is None:
+            raise InvalidIssuerError("Token is missing the 'iss' claim")
+        if token_issuer != issuer:
+            raise InvalidIssuerError(f"Token issuer {token_issuer!r} does not match {issuer!r}")
+
+    return claims
