@@ -504,7 +504,14 @@ Each result file records provenance alongside its measurements: UTC timestamp, h
 CPU model, Python version, and the resolved versions of both packages under test. Charts
 render that provenance as a caption, so a reader can tell what the numbers describe.
 
-### Harness
+Request-model behavior is measured black-box, through Docker, by the integration
+comparison harness specified in the next section. That is where cold-start latency,
+event-loop blocking, OIDC request counts and rotation recovery come from. Measuring a
+blocking event loop from outside the process is both more honest and more convincing than
+instrumenting it from within, and it removes any question of the measurement perturbing
+the thing measured.
+
+The `benchmarks/` tree holds only what does not need two running services.
 
 ```
 benchmarks/
@@ -512,46 +519,25 @@ benchmarks/
   bench/
     __init__.py
     provenance.py           machine/version metadata shared by all benchmarks
-    oidc_server.py          local ThreadingHTTPServer with injectable latency
-    footprint.py            dependency count, installed size, source LOC
-    cold_start.py           first-request latency and event-loop lag under concurrency
-    request_count.py        OIDC HTTP calls per distinct lockdown scope set
+    footprint.py            dependency count, installed size, image size, source LOC
     warm_decode.py          steady-state token validations per second
     security_matrix.py      attack vectors run against both implementations
+    charts.py               result JSON -> Plotly figure specs
 ```
 
-`oidc_server.py` is a real local HTTP server rather than a mock, because the effects being
-measured are about blocking on network I/O. It serves `/.well-known/openid-configuration`
-and `/jwks.json`, injects a configurable per-response delay to model realistic provider
-latency, and counts the requests it receives. That request count is itself a measurement,
-not an estimate.
-
-`footprint.py` and `cold_start.py` install each package into its own throwaway
-`uv venv` and run the workload in a subprocess against that interpreter. Comparing the two
-libraries inside one environment is not possible, since they resolve incompatible
-dependency sets, and it would understate the footprint difference anyway.
+`footprint.py` installs each package into its own throwaway `uv venv` and inspects it.
+Comparing the two libraries inside one environment is not possible, since they resolve
+incompatible dependency sets, and it would understate the difference anyway.
 
 ### Measurements
 
 **Footprint.** Runtime distribution count, total transitive distribution count, installed
-`site-packages` size in bytes, and source lines of code. LOC is counted as non-blank,
-non-comment lines via `tokenize`, reported both for the library itself and for the library
-plus the dependencies unique to it, since "code you actually ship" is the honest metric.
-
-**Cold start.** A FastAPI app with N distinct `lockdown()` scope sets is hit with C
-concurrent requests against a cold cache, for C in 1, 2, 4, 8, 16, 32. Reports p50, p95
-and max time to first response.
-
-Reported alongside it: **event loop lag**, sampled by a background task that records the
-drift between its intended and actual wake times during the cold load. This is the metric
-that directly captures the difference in threading model. Upstream calls synchronous
-`httpx.get` from inside `async def __call__`, so the loop is blocked for the full duration
-of both fetches; `armasec-lite` offloads that to an executor. Lag is measured, not
-inferred.
-
-**Request count.** For N distinct `lockdown()` scope sets against one domain, the number of
-OIDC HTTP requests observed by the local server. Upstream's per-`TokenSecurity` lazy load
-makes this `2N`; the process-wide cache makes it `2`. Both are counted, not asserted.
+`site-packages` size in bytes, built container image size, and source lines of code. LOC
+is counted as non-blank, non-comment lines via `tokenize`, reported both for the library
+itself and for the library plus the dependencies unique to it, since "code you actually
+ship" is the honest metric. Image size is read from `docker image inspect` on the two
+application images the integration harness builds, which makes it a real deployment
+number rather than a proxy for one.
 
 **Warm decode.** Steady-state token validations per second on an already-loaded cache,
 `armasec_lite.jwt` against `jose.jwt`, with warmup discarded and the median of repeated
@@ -564,6 +550,119 @@ because jose does defend most of them. The honest story here is not that upstrea
 insecure; it is that `armasec-lite` enforces `verify_issuer` and JWK-type-versus-algorithm
 matching at its own boundary, and has explicit tests proving each defense rather than
 inheriting them from a transitive dependency. The matrix presents it that way.
+
+## Integration comparison harness
+
+Two real FastAPI services under Docker Compose, one on upstream `armasec==3.0.3` and one
+on `armasec-lite`, driven by a load generator. Everything about the request model is
+measured from the outside, over the network, against running servers.
+
+```
+tests/
+  unit/                     the ported suite, the attack suite, the unit tests
+  integration/
+    docker-compose.yaml
+    Dockerfile.app          one Dockerfile, parameterized by build arg
+    Dockerfile.bench
+    app/
+      main.py               ONE app module, import selected by env var
+    oidc/
+      server.py             OIDC provider: config, jwks, mint, rotate, stats
+    bench/
+      run.py                scenario driver, writes results JSON
+      scenarios.py          the scenario definitions
+      report.py             aggregation and summary printing
+    results/                committed JSON
+    test_parity.py          pytest: identical responses from both services
+    conftest.py
+```
+
+### Fairness
+
+The comparison is only worth publishing if the sole difference between the two services is
+the auth library. The harness enforces that:
+
+- **One app module.** `app/main.py` is a single file. It selects its import at startup
+  from an `ARMASEC_IMPL` environment variable and builds the identical route table either
+  way. There is no second copy of the app to drift.
+- **One Dockerfile**, parameterized by a build argument that picks which package to
+  install. Same base image, same Python version, same uvicorn version and invocation, same
+  worker count, same loop implementation.
+- **Equal resource limits.** Identical `cpus` and `mem_limit` on both app services in
+  `docker-compose.yaml`.
+- **Interleaved trials.** Each scenario alternates legacy and lite runs rather than
+  running all of one then all of the other, so machine drift, thermal throttling and
+  noisy neighbors affect both arms equally.
+- **Repeated trials with cold restarts.** Cold-start scenarios `docker compose restart`
+  the app service between repetitions. Five repetitions by default; the median is
+  reported and the spread is recorded in the result file.
+- **Open-loop load generation.** The driver issues requests at a fixed arrival rate rather
+  than waiting for each response before sending the next. A closed-loop generator stops
+  sending while the server is stalled, which hides exactly the blocking behavior this
+  harness exists to measure. This is the coordinated-omission problem and avoiding it is
+  the difference between a meaningful latency number and a flattering one.
+
+### The OIDC service
+
+A small real HTTP server, not a mock, holding a fixed RSA keypair. Endpoints:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `/.well-known/openid-configuration` | standard discovery document |
+| `/jwks.json` | current JWKS |
+| `/__mint` | sign a token with caller-supplied claims, so the load generator needs no key material |
+| `/__rotate` | swap in a new `kid`, for the rotation scenario |
+| `/__stats` | request counts per path, for exact call counting |
+| `/__latency` | set the injected per-response delay at runtime |
+
+Injected latency models a real provider. Request counts come from this service's own
+counters, so the OIDC-call comparison is counted, never asserted.
+
+### Scenarios
+
+| ID | Scenario | Measures |
+| --- | --- | --- |
+| S1 | Cold start, one route, concurrency sweep at 1, 2, 4, 8, 16, 32, 64 | p50, p95, max time to first response |
+| S2 | Cold start, N distinct `lockdown()` scope sets at N of 1, 5, 10, 20 | OIDC requests observed, wall time until all routes warm |
+| S3 | Warm steady state, sustained open-loop load | requests per second, latency percentiles |
+| S4 | Unauthenticated `/health` hammered *during* a cold auth load | `/health` latency, which exposes event-loop blocking entirely from outside the process |
+| S5 | Provider latency sweep at 0, 50, 200, 500 ms | cold-start sensitivity to provider latency |
+| S6 | JWKS key rotation mid-run via `/__rotate` | error count after rotation, time to recovery |
+| S7 | Malformed, expired, wrong-audience, wrong-issuer, insufficient-scope tokens | HTTP status code from each service |
+
+S4 is the central result. Upstream calls synchronous `httpx.get` from inside
+`async def __call__`, so during a cold load the event loop cannot serve anything, including
+routes that have no authentication at all. A client watching `/health` sees that directly.
+No instrumentation, no profiler, no claim the reader has to take on faith.
+
+S6 is a feature difference rather than a performance one and is labeled as such in the
+docs. Upstream caches the JWKS for the process lifetime, so after a rotation it should
+return 401 until restart; `armasec-lite` should recover within its refetch interval.
+
+S7 is a correctness scenario, not a performance one. Its assertion is **parity**: both
+services must return the same status code for the same request. Any divergence other than
+the documented `verify_issuer` default is a bug in `armasec-lite`.
+
+### Parity tests
+
+`test_parity.py` runs S7 as ordinary pytest tests, marked `integration` and skipped when
+the compose stack is not up. They assert response-code equality between the two services
+across the malformed-token matrix. This is the strongest available evidence for the
+drop-in claim, since it tests the shipped artifact over HTTP rather than testing an
+import.
+
+`pyproject.toml` sets `testpaths = ["tests/unit"]` so a plain `pytest` run never tries to
+reach Docker. Integration tests run only when asked for.
+
+### Results and provenance
+
+Written to `tests/integration/results/*.json` and committed. Each file records UTC
+timestamp, hostname, CPU model, kernel, Docker version, container resource limits,
+repetition count, and the resolved versions of both libraries. `benchmarks/bench/charts.py`
+reads from both `benchmarks/results/` and `tests/integration/results/`.
+
+Numbers from this harness describe one machine running Docker, and the docs say so. The
+ratios between the two arms are the meaningful part, not the absolute milliseconds.
 
 ## Documentation site
 
@@ -596,6 +695,7 @@ docs/
     jwt-verification.md           the six-step verification order and its rationale
     threat-model.md               what is defended, what is out of scope
   benchmarks.md                   the charts
+  comparison.md                   the legacy comparison harness and its scenarios
   testing.md                      generated test results
   api-reference/                  autogenerated by the pydoc plugin, not committed
   contributing.md
@@ -619,23 +719,68 @@ scatter and heatmap at roughly a third the size of the full distribution. The co
 reads `useColorMode()` and selects a light or dark template, so charts follow the site
 theme rather than sitting on a white rectangle in dark mode.
 
-Six charts:
+Charts:
 
 | Chart | Type | Source |
 | --- | --- | --- |
-| Dependency and size footprint | Grouped bar | `footprint.json` |
-| Source lines of code shipped | Grouped bar | `footprint.json` |
-| Cold-start latency versus concurrency | Grouped bar, p50 and p95 | `cold_start.json` |
-| Event loop lag during cold load | Bar | `cold_start.json` |
-| OIDC requests per lockdown scope set | Bar | `request_count.json` |
-| Security posture by attack vector | Heatmap | `security_matrix.json` |
+| Dependency count and installed size | Grouped bar | `benchmarks/results/footprint.json` |
+| Container image size | Bar | `benchmarks/results/footprint.json` |
+| Source lines of code shipped | Grouped bar | `benchmarks/results/footprint.json` |
+| Cold-start latency versus concurrency | Grouped bar, p50 and p95 | `integration/results/s1_cold_start.json` |
+| OIDC requests per lockdown scope set | Bar | `integration/results/s2_scope_sets.json` |
+| Warm steady-state throughput and latency | Grouped bar | `integration/results/s3_warm.json` |
+| `/health` latency during cold auth load | Line over time | `integration/results/s4_loop_block.json` |
+| Cold start versus provider latency | Line | `integration/results/s5_provider_latency.json` |
+| Errors and recovery after key rotation | Line over time | `integration/results/s6_rotation.json` |
+| Security posture by attack vector | Heatmap | `benchmarks/results/security_matrix.json` |
 
-Warm decode throughput is reported as a table on `benchmarks.md` rather than a chart. If
-the result is rough parity, a bar chart of two near-identical bars invites a
-misreading that a table does not.
+The S4 chart is the headline. Plotting unauthenticated `/health` latency on a time axis,
+with the cold auth load marked, shows the legacy service's unrelated route stalling for
+the duration of its OIDC fetch while the lite service's does not. It is a black-box
+measurement of event-loop blocking that needs no explanation of what an event loop is.
+
+Warm decode microbenchmark results are reported as a table on `benchmarks.md` rather than
+a chart. If the result is rough parity, a bar chart of two near-identical bars invites a
+misreading that a table does not. S3, which measures end-to-end warm throughput through
+the real services, does get a chart.
+
+Response-code parity from S7 renders as a table, since every cell should read "identical"
+and a chart of that would be theater.
 
 Every chart caption carries the provenance line from its result file, and `benchmarks.md`
 opens by stating how to regenerate the data.
+
+### Task runner
+
+A `justfile` at the repository root, following the convention in the sibling Vantage
+repositories.
+
+| Recipe | Action |
+| --- | --- |
+| `just test` | unit suite only, no Docker |
+| `just lint` | `ruff` and `mypy` |
+| `just compare-legacy` | the full legacy comparison, described below |
+| `just bench` | the non-Docker microbenchmarks in `benchmarks/` |
+| `just charts` | regenerate Plotly specs from committed results |
+| `just docs` | build the Docusaurus site |
+| `just docs-serve` | run the docs site locally |
+
+`just compare-legacy` is the single command that produces the comparison:
+
+1. Build both application images and the OIDC and bench images.
+2. Record image sizes into the footprint result.
+3. `docker compose up -d`, wait for all health checks.
+4. Run scenarios S1 through S7, interleaving legacy and lite arms, restarting app
+   containers between cold-start repetitions.
+5. Run `test_parity.py` against the live stack.
+6. Write result JSON into `tests/integration/results/`.
+7. `docker compose down -v`.
+8. Regenerate the Plotly specs in `docusaurus/static/charts/`.
+9. Print a summary table to the terminal, so the run is useful without opening the docs.
+
+The recipe fails if any scenario fails, if a parity test fails, or if a result file would
+be written with a missing series. A partially successful run must not silently publish a
+partial chart.
 
 ### Test results page
 
