@@ -1,5 +1,6 @@
 import hashlib
 import hmac as hmac_mod
+import time
 
 import pytest
 from cryptography.hazmat.primitives import hashes
@@ -7,14 +8,20 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 from armasec_lite.jwt import (
+    _EC_CURVES,
     SUPPORTED_ALGORITHMS,
     InvalidAlgorithmError,
     InvalidKeyError,
     InvalidSignatureError,
+    b64url_decode,
     b64url_encode,
+    decode,
+    encode,
     verify_signature,
 )
 from armasec_lite.schemas import JWK
+
+from .conftest import ALL_ALGORITHMS, HS_SECRET
 
 SIGNING_INPUT = b"header.payload"
 
@@ -47,6 +54,60 @@ def test_supported_algorithms_cover_the_spec():
             "EdDSA",
         }
     )
+
+
+@pytest.mark.parametrize(
+    ("algorithm", "expected_bytes"),
+    [("ES256", 32), ("ES384", 48), ("ES512", 66)],
+)
+def test_ecdsa_coordinate_sizes_are_correct(algorithm, expected_bytes):
+    """
+    P-521 is 521 bits, which is 65.125 bytes and therefore 66, not 64 or 65. Getting this
+    wrong produces signatures that fail verification everywhere except against our own
+    matching mistake.
+    """
+    _, coord_bytes = _EC_CURVES[algorithm]
+    assert coord_bytes == expected_bytes
+
+
+@pytest.mark.parametrize("algorithm", ALL_ALGORITHMS)
+def test_every_supported_algorithm_round_trips(algorithm, key_material):
+    """
+    Sign and verify once per supported algorithm, so that a constant that is wrong only
+    for one variant cannot hide behind the 256 bit members of its own family.
+    """
+    material = key_material(algorithm)
+    now = int(time.time())
+    token = encode(
+        {"sub": "abc", "exp": now + 60},
+        material.sign_key,
+        algorithm,
+        headers={"kid": material.jwk.kid},
+    )
+    assert decode(token, material.jwk, [algorithm])["sub"] == "abc"
+
+
+@pytest.mark.parametrize("algorithm", ALL_ALGORITHMS)
+def test_every_supported_algorithm_rejects_a_tampered_signature(algorithm, key_material):
+    """
+    The other half of the round trip. An implementation that accepted everything would
+    pass the test above for every algorithm at once.
+    """
+    material = key_material(algorithm)
+    now = int(time.time())
+    token = encode(
+        {"sub": "abc", "exp": now + 60},
+        material.sign_key,
+        algorithm,
+        headers={"kid": material.jwk.kid},
+    )
+    head, body, signature_b64 = token.split(".")
+    # Flip a bit rather than truncating, so the signature keeps its length and the ECDSA
+    # length guard does not answer for the primitive.
+    tampered = bytearray(b64url_decode(signature_b64))
+    tampered[-1] ^= 0xFF
+    with pytest.raises(InvalidSignatureError):
+        decode(f"{head}.{body}.{b64url_encode(bytes(tampered))}", material.jwk, [algorithm])
 
 
 def test_rs256_accepts_a_valid_signature(rsa_private, rsa_jwk):
@@ -126,7 +187,7 @@ def test_eddsa_rejects_a_tampered_signature(ed_private, ed_jwk):
 
 
 def test_hs256_accepts_a_valid_mac(oct_jwk):
-    sig = hmac_mod.new(b"s" * 32, SIGNING_INPUT, hashlib.sha256).digest()
+    sig = hmac_mod.new(HS_SECRET, SIGNING_INPUT, hashlib.sha256).digest()
     verify_signature("HS256", oct_jwk, SIGNING_INPUT, sig)
 
 
