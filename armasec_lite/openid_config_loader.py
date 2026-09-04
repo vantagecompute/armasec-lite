@@ -9,9 +9,9 @@ Three things here are not in upstream armasec, and all three are invisible from 
 
 ### The loader cache is process-wide
 
-Upstream builds one loader per `TokenSecurity`, so an app with ten distinct `lockdown()`
-scope sets against one domain performs ten independent loads, or twenty HTTP requests.
-Sharing by domain makes that two.
+Upstream builds one loader per `TokenSecurity`, so an app with four distinct `lockdown()`
+scope sets against one domain performs four independent loads, or eight HTTP requests.
+Sharing by domain makes that two, however many scope sets are added.
 
 The cache is keyed on `(domain, use_https)` rather than on the domain alone. The two are
 genuinely different providers as far as this library is concerned: they are fetched over

@@ -21,12 +21,14 @@ code in it. Everything else in the request path (header unpacking, scope checks,
 - **Standard claim checks** (`exp`, `nbf`, `aud`, `iss`) with leeway support, and, unlike
   upstream, a default-on `iss` check against the provider's discovery document (see
   [Migration](../migration.md)).
-- **Transport hardening for the OIDC HTTP calls**: explicit certificate and hostname
+- **Transport hardening for the OIDC HTTP calls**: a scheme guard refusing anything that is
+  not `http` or `https` (`urllib`'s default opener reads `file://` URLs, and `jwks_uri`
+  arrives inside a document fetched from the network), explicit certificate and hostname
   verification, a redirect handler that refuses an `https`-to-`http` downgrade and caps
   the redirect count, and a response size cap so a hostile or compromised JWKS endpoint
   cannot exhaust memory.
 
-See [JWT verification](./jwt-verification.md) for the full six-step order and
+See [JWT verification](./jwt-verification.md) for the full verification order and
 [Threat model](./threat-model.md) for what is and is not attacker-controlled.
 
 ## What is out of scope

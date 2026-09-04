@@ -96,8 +96,9 @@ fixtures from a plain `armasec-lite` install.
 
 Upstream's `OpenidConfigLoader` is private to whichever object constructs it. `armasec-lite`
 keeps a module-level cache keyed by `(domain, use_https)`, shared across every `Armasec`
-instance in the process: an app with ten distinct `lockdown()` scope sets against one
-domain performs two HTTP requests total instead of twenty.
+instance in the process: an app with four distinct `lockdown()` scope sets against one
+domain performs two HTTP requests total instead of eight, and it stays at two however many
+scope sets are added.
 
 That sharing is a test-isolation hazard: two tests that each construct an `Armasec` against
 the same domain, expecting independent state, now see each other's cached config and JWKS.
