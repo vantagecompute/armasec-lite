@@ -29,6 +29,15 @@ def _sign(rsa_private, claims: dict, header: dict | None = None) -> str:
     return f"{head_b64}.{body_b64}.{b64url_encode(sig)}"
 
 
+def _sign_raw(rsa_private, payload_json: str) -> str:
+    """Sign a payload written as raw JSON text, so literals `json.dumps` avoids survive."""
+    head_b64 = b64url_encode(json.dumps({"alg": "RS256", "typ": "JWT", "kid": "rsa-test"}).encode())
+    body_b64 = b64url_encode(payload_json.encode())
+    signing_input = f"{head_b64}.{body_b64}".encode("ascii")
+    sig = rsa_private.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+    return f"{head_b64}.{body_b64}.{b64url_encode(sig)}"
+
+
 @pytest.fixture
 def now():
     return int(time.time())
@@ -93,6 +102,38 @@ def test_decode_rejects_a_token_not_yet_valid(rsa_private, rsa_jwk, now):
 def test_decode_rejects_a_non_numeric_exp(rsa_private, rsa_jwk):
     token = _sign(rsa_private, {"sub": "abc", "exp": "soon"})
     with pytest.raises(InvalidTokenError, match="exp"):
+        decode(token, rsa_jwk, ALGS)
+
+
+@pytest.mark.parametrize("claim", ["exp", "nbf", "iat"])
+@pytest.mark.parametrize("literal", ["Infinity", "-Infinity", "NaN"])
+def test_decode_rejects_a_non_json_numeric_constant(rsa_private, rsa_jwk, claim, literal):
+    """
+    `Infinity` and `NaN` are not JSON, and Python's parser accepts them anyway.
+
+    An `exp` of either never expires: `now > inf` is False, and every comparison against
+    NaN is False. The token still has to be signed by the issuer, so this is not a bypass,
+    but this module rejects non-canonical base64 for exactly this reason and refusing
+    ambiguous numbers is the same rule.
+    """
+    token = _sign_raw(rsa_private, f'{{"sub": "abc", "{claim}": {literal}}}')
+    with pytest.raises(InvalidTokenError, match="JSON"):
+        decode(token, rsa_jwk, ALGS)
+
+
+@pytest.mark.parametrize("claim", ["exp", "nbf", "iat"])
+def test_decode_rejects_a_numeric_claim_too_large_for_a_float(rsa_private, rsa_jwk, claim):
+    """`float(10**400)` raises OverflowError, which is not an AuthenticationError."""
+    token = _sign_raw(rsa_private, f'{{"sub": "abc", "{claim}": {10**400}}}')
+    with pytest.raises(InvalidTokenError, match=claim):
+        decode(token, rsa_jwk, ALGS)
+
+
+@pytest.mark.parametrize("claim", ["exp", "nbf", "iat"])
+def test_decode_rejects_a_numeric_claim_that_overflows_to_infinity(rsa_private, rsa_jwk, claim):
+    """`1e400` needs no JSON constant: the parser hands back a float infinity directly."""
+    token = _sign_raw(rsa_private, f'{{"sub": "abc", "{claim}": 1e400}}')
+    with pytest.raises(InvalidTokenError, match=claim):
         decode(token, rsa_jwk, ALGS)
 
 

@@ -25,9 +25,16 @@ the provider's issuer and then never checks a token against it. Pass False for e
 upstream behavior. The comparison is exact string equality, which is why
 `OpenidConfig.issuer` is stored unnormalized.
 
-Audience verification is skipped only when `ignore_audience` is set and no audience is
-configured, and skipping it is explicit rather than implied by a None audience: a token for
-a different API is otherwise accepted by a route that simply forgot to configure one.
+Audience verification is skipped in two cases, and they are worth separating. The explicit
+one is `ignore_audience=True` with no audience configured, which turns `verify_aud` off by
+name. The implicit one is the `DomainConfig` default, `audience=None` with
+`ignore_audience=False`: `verify_aud` stays on, but `jwt.decode` only checks `aud` when an
+audience was actually passed, so nothing is compared.
+
+That second case is the operator-visible one. A domain with no configured audience performs
+no audience check at all, so in a multi-domain setup a token the same issuer minted for a
+different API is accepted here. This matches upstream armasec, and configuring `audience`
+is what closes it.
 """
 
 from __future__ import annotations

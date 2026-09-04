@@ -13,15 +13,21 @@ it selects still has to verify the signature, so choosing a different one only m
 token fails. The same is true of the `alg` in that header, which is ignored entirely; the
 algorithm comes from `DomainConfig` by way of the constructor.
 
-### Key rotation
+### Key rotation, and why the decoder does not perform it
 
-An unknown `kid` is what a provider key rotation looks like from here. When a
-`jwks_refresher` is configured, which `TokenSecurity` always does, an unmatched `kid`
-triggers exactly one refetch attempt per decode, never a loop. The refresher itself is
-rate limited in `openid_config_loader`, so a flood of tokens carrying invented key ids
-cannot be turned into a flood of outbound requests. Without a refresher the decoder simply
-fails, which is upstream armasec's behavior: every request returns 401 until the service is
-restarted.
+An unknown `kid` is what a provider key rotation looks like from here. Recovering means
+refetching the JWKS, and this module deliberately does not do that itself: `get_decode_key`
+is called from `TokenSecurity.__call__` on the event loop thread, and `kid` comes from the
+token's unverified header, so a blocking fetch here would let any unauthenticated caller
+stall every request in the process for the fetch timeout.
+
+Instead `get_decode_key` raises `UnknownKeyIdError` when a `jwks_refresher` is configured,
+which `TokenSecurity` always does. `TokenSecurity` catches it, calls `refresh_keys` from a
+worker thread, and retries the decode exactly once. The refresher is also rate limited in
+`openid_config_loader`, so a flood of tokens carrying invented key ids cannot be turned
+into a flood of outbound requests. Without a refresher there is nothing to report, so the
+decoder raises a plain `AuthenticationError`, which is upstream armasec's behavior: every
+request returns 401 until the service is restarted.
 
 ### Two error types, two very different statuses
 
@@ -40,7 +46,7 @@ from functools import partial
 from typing import Any
 
 from armasec_lite import jwt
-from armasec_lite.exceptions import AuthenticationError, PayloadMappingError
+from armasec_lite.exceptions import AuthenticationError, PayloadMappingError, UnknownKeyIdError
 from armasec_lite.schemas import JWK, JWKs
 from armasec_lite.token_payload import TokenPayload
 from armasec_lite.utilities import log_error, noop
@@ -60,7 +66,7 @@ class TokenDecoder:
                                  becomes the one-element allowlist `jwt.decode` checks a
                                  token's `alg` against, so a token asking for anything
                                  else is refused before a key is touched.
-        jwks:                    The current key set. Replaced by `jwks_refresher` when a
+        jwks:                    The current key set. Replaced by `refresh_keys` after a
                                  token presents an unknown `kid`.
         debug_logger:            A callable such as `logger.debug`, defaulting to `noop`.
         decode_options_override: Options merged under any passed to `decode`. One of them,
@@ -68,8 +74,10 @@ class TokenDecoder:
                                  is a testing switch only.
         permission_extractor:    Optional function pulling permissions out of a claim that
                                  is not a top level `permissions`.
-        jwks_refresher:          Optional callable returning a freshly fetched key set,
-                                 consulted at most once per decode.
+        jwks_refresher:          Optional callable returning a freshly fetched key set.
+                                 Never called from `get_decode_key`; `refresh_keys` is the
+                                 only caller, and `TokenSecurity` drives it from a worker
+                                 thread.
     """
 
     def __init__(
@@ -118,9 +126,10 @@ class TokenDecoder:
                                          return decoded_token["resource_access"][resource_key]["roles"]
                                      ```
             jwks_refresher:          Optional callable returning a freshly fetched JWKs.
-                                     Consulted once when a token's `kid` is absent from the
-                                     current set, which is what a provider key rotation
-                                     looks like from here.
+                                     Invoked only by `refresh_keys`, which the caller runs
+                                     after `get_decode_key` reports an unknown `kid`. It
+                                     performs blocking network work, so the caller is
+                                     responsible for running it off the event loop.
         """
         self.algorithm = algorithm
         self.jwks = jwks
@@ -146,6 +155,28 @@ class TokenDecoder:
                 return jwk
         return None
 
+    def refresh_keys(self) -> None:
+        """
+        Replace the key set with a freshly fetched one, if a refresher is configured.
+
+        Blocking network work. This is the whole reason `get_decode_key` reports an
+        unknown `kid` rather than recovering from it: the caller must run this off the
+        event loop, and `TokenSecurity` does so through `run_in_executor`. Calling it from
+        a coroutine would stall every request in the process for the fetch timeout.
+
+        A no-op when no `jwks_refresher` was configured, so a caller can call it
+        unconditionally after an unknown `kid`.
+
+        Raises:
+            AuthenticationError: The refetch failed or the response did not validate. The
+                refresher raises this; nothing is caught here, and the current key set is
+                left untouched. Maps to 401.
+        """
+        if self.jwks_refresher is None:
+            return
+        self.debug_logger("Refreshing the decoder's key set")
+        self.jwks = self.jwks_refresher()
+
     def get_decode_key(self, token: str) -> JWK:
         """
         Find the public key matching a token's `kid`.
@@ -154,11 +185,11 @@ class TokenDecoder:
         used to select a key and for nothing else; the key then has to actually verify the
         signature.
 
-        On a miss, and only when a `jwks_refresher` is configured, the key set is refetched
-        once and searched again. That covers a provider key rotation without a restart. The
-        refresher is consulted exactly once per call, never in a loop, and is itself rate
-        limited, so an attacker sending tokens with invented key ids cannot amplify them
-        into outbound requests.
+        A miss is reported, never recovered from here. This method runs on the event loop
+        thread, and recovery means a blocking JWKS refetch. Raising `UnknownKeyIdError`
+        hands that decision to `TokenSecurity`, which refetches from a worker thread and
+        retries once. The error is raised only when a `jwks_refresher` is configured, since
+        without one there is no recovery for a caller to attempt.
 
         Args:
             token: The token whose key should be found.
@@ -168,10 +199,12 @@ class TokenDecoder:
             own; the signature check that follows is what decides the token's fate.
 
         Raises:
-            AuthenticationError: The token has no `kid` header, or no key matches it even
-                after a refresh. Maps to 401. In practice the second case means either a
-                token from a different provider or a rotation this process has not caught
-                up with, and the debug logger distinguishes them.
+            UnknownKeyIdError: No key in the current set carries the token's `kid`, and a
+                `jwks_refresher` is configured, so a refetch might recover it. Maps to 401
+                if nobody catches it. In practice it means either a token from a different
+                provider or a key rotation this process has not caught up with.
+            AuthenticationError: The token has no `kid` header, or no key matches it and no
+                refresher is configured. Maps to 401.
             InvalidTokenError: The token is not a well formed JWS, so its header could not
                 be read at all. A subclass of `AuthenticationError`; also 401.
         """
@@ -188,15 +221,13 @@ class TokenDecoder:
         if jwk is not None:
             return jwk
 
-        # An unknown kid is what a provider key rotation looks like from here, so try
-        # once for a fresh key set before giving up. The refresher is consulted exactly
-        # once per decode attempt, never in a loop, so this cannot become a request flood.
+        # An unknown kid is what a provider key rotation looks like from here. Report it
+        # rather than refetching: this runs on the event loop, `kid` comes from the
+        # unverified header, and a blocking fetch here is a whole-process stall that any
+        # unauthenticated caller could trigger at will.
         if self.jwks_refresher is not None:
-            self.debug_logger(f"No key matched kid {kid!r}; refreshing jwks")
-            self.jwks = self.jwks_refresher()
-            jwk = self._find_key(str(kid))
-            if jwk is not None:
-                return jwk
+            self.debug_logger(f"No key matched kid {kid!r}; reporting for refresh")
+            raise UnknownKeyIdError("Could not find a matching jwk")
 
         raise AuthenticationError("Could not find a matching jwk")
 
@@ -222,6 +253,10 @@ class TokenDecoder:
             real token simply wins.
 
         Raises:
+            UnknownKeyIdError: No key in the current set carries the token's `kid` and a
+                `jwks_refresher` is configured. Passes through `handle_errors` unwrapped,
+                since it is an `ArmasecError`, so `TokenSecurity` can catch it and drive a
+                refresh. Maps to 401 if nobody does.
             AuthenticationError: The token is malformed, its signature does not verify, or
                 a claim check failed. The subclasses in `armasec_lite.jwt` carry the
                 specific reason, and all of them map to 401.

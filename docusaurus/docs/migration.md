@@ -131,11 +131,14 @@ must restart before it will accept tokens signed by the new key.
 
 `armasec-lite`'s `TokenDecoder` gains an optional keyword argument,
 `jwks_refresher: Callable[[], JWKs] | None = None`, and the library wires
-`loader.refresh_jwks` into it internally. On an unknown `kid`, the decoder calls the
-refresher and searches the refreshed JWKS once more before giving up, so a rotation
-recovers without a process restart. This is rate limited to once per 300 seconds, so a
-flood of tokens signed with an unrecognized key cannot become a flood of outbound requests
-to the provider.
+`loader.refresh_jwks` into it internally. On an unknown `kid` the decoder raises
+`UnknownKeyIdError`; `TokenSecurity` catches it, runs `TokenDecoder.refresh_keys` in an
+executor thread, and searches the refreshed JWKS once more before giving up, so a rotation
+recovers without a process restart. Refetching from a worker thread rather than inline
+matters because `kid` comes from the unverified header: an inline fetch would let any
+caller stall the event loop on demand. It is also rate limited to once per 300 seconds, so
+a flood of tokens signed with an unrecognized key cannot become a flood of outbound
+requests to the provider.
 
 **Why it is safe:** this is purely additive. The first positional argument to
 `TokenDecoder` is still `JWKs`, so every existing construction site is unaffected. Almost

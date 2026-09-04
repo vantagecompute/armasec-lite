@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 import time
 
 import pytest
@@ -36,13 +37,24 @@ def reset_cache():
     clear_cache()
 
 
+class _Calls(list):
+    """The recorded fetch URLs, with the served documents hung off them.
+
+    A plain list keeps every `fake_get.count(...)` assertion working, and `routes` lets a
+    test rewrite what the provider serves next, which is how a key rotation is staged.
+    """
+
+    routes: dict
+
+
 @pytest.fixture
 def fake_get(monkeypatch, rsa_jwk):
-    calls: list[str] = []
+    calls = _Calls()
     jwks_doc = {
         "keys": [{"kty": "RSA", "kid": rsa_jwk.kid, "alg": "RS256", "n": rsa_jwk.n, "e": rsa_jwk.e}]
     }
     routes = {CONFIG_URL: {"issuer": ISSUER, "jwks_uri": JWKS_URL}, JWKS_URL: jwks_doc}
+    calls.routes = routes
 
     def _get(url, *, timeout=10.0):
         calls.append(url)
@@ -54,7 +66,7 @@ def fake_get(monkeypatch, rsa_jwk):
 
 @pytest.fixture
 def make_token(rsa_private):
-    def _make(**overrides):
+    def _make(kid="rsa-test", **overrides):
         claims = {
             "sub": "abc",
             "exp": int(time.time()) + 600,
@@ -62,7 +74,7 @@ def make_token(rsa_private):
             "permissions": [],
             **overrides,
         }
-        head = b64url_encode(json.dumps({"alg": "RS256", "kid": "rsa-test"}).encode())
+        head = b64url_encode(json.dumps({"alg": "RS256", "kid": kid}).encode())
         body = b64url_encode(json.dumps(claims).encode())
         sig = rsa_private.sign(
             f"{head}.{body}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256()
@@ -278,3 +290,89 @@ async def test_the_warm_path_makes_no_executor_hop(fake_get, make_token, executo
     await security(request)
     await security(request)
     assert executor_calls == []
+
+
+async def test_the_jwks_refresh_runs_in_an_executor(fake_get, make_token, executor_calls):
+    """
+    An unknown `kid` triggers a blocking refetch, and it must not run on the event loop.
+
+    `kid` is read from the unverified header, so any unauthenticated caller chooses it. An
+    inline refresh would let one invented key id stall the whole process for the fetch
+    timeout, which is precisely the upstream behavior this library exists to fix.
+    """
+    security = _security()
+    await security(_Request({"Authorization": f"Bearer {make_token()}"}))
+    executor_calls.clear()
+
+    with pytest.raises(HTTPException) as info:
+        await security(_Request({"Authorization": f"Bearer {make_token(kid='rotated')}"}))
+    assert info.value.status_code == 401
+    assert executor_calls == ["_refresh_and_retry"]
+
+
+async def test_the_jwks_refresh_never_fetches_on_the_loop_thread(fake_get, make_token, monkeypatch):
+    """The direct proof: no provider fetch happens on the thread running the event loop."""
+    loop_thread = threading.get_ident()
+    fetch_threads: list[int] = []
+    served = loader_module.http.get_json
+
+    def _watching_get(url, *, timeout=10.0):
+        fetch_threads.append(threading.get_ident())
+        return served(url, timeout=timeout)
+
+    monkeypatch.setattr(loader_module.http, "get_json", _watching_get)
+
+    security = _security()
+    with pytest.raises(HTTPException):
+        await security(_Request({"Authorization": f"Bearer {make_token(kid='rotated')}"}))
+
+    assert fetch_threads, "no fetch was made, so the test proves nothing"
+    assert loop_thread not in fetch_threads
+
+
+async def test_the_refresh_is_attempted_at_most_once_per_request(fake_get, make_token):
+    """One request buys one refetch. The loader's rate limit then applies on top."""
+    security = _security()
+    await security(_Request({"Authorization": f"Bearer {make_token()}"}))
+    before = fake_get.count(JWKS_URL)
+
+    with pytest.raises(HTTPException):
+        await security(_Request({"Authorization": f"Bearer {make_token(kid='rotated')}"}))
+    assert fake_get.count(JWKS_URL) == before + 1
+
+
+async def test_a_rotated_kid_recovers_without_a_restart(fake_get, make_token):
+    """
+    The whole point of the refresh path: a provider key rotation heals itself.
+
+    Upstream caches the JWKS for the life of the process, so a rotation 401s every request
+    until someone restarts the service.
+    """
+    security = _security()
+    await security(_Request({"Authorization": f"Bearer {make_token()}"}))
+
+    fake_get.routes[JWKS_URL]["keys"][0]["kid"] = "rotated"
+    payload = await security(_Request({"Authorization": f"Bearer {make_token(kid='rotated')}"}))
+    assert payload.sub == "abc"
+
+
+async def test_concurrent_cold_calls_do_not_duplicate_managers(fake_get, make_token, monkeypatch):
+    """
+    Every concurrent first request passes the empty-cache check, so the load must assign
+    the finished list rather than append to the shared one. Otherwise N simultaneous cold
+    requests leave N copies of every manager behind, and each duplicate re-runs the decode
+    and the refresh for the rest of the process.
+    """
+    served = loader_module.http.get_json
+
+    def _slow_get(url, *, timeout=10.0):
+        # Slow enough that every worker is past the empty-cache guard before any finishes.
+        time.sleep(0.05)
+        return served(url, timeout=timeout)
+
+    monkeypatch.setattr(loader_module.http, "get_json", _slow_get)
+
+    security = _security()
+    request = _Request({"Authorization": f"Bearer {make_token()}"})
+    await asyncio.gather(*(security(request) for _ in range(5)))
+    assert len(security.managers) == 1
