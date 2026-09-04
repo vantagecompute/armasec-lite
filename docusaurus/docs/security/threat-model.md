@@ -19,12 +19,25 @@ request, and the JWKS document it fetches to check that token against.
   the token, but selecting a key is not the same as trusting one: the key found by `kid`
   still has to pass the `kty`-to-algorithm consistency check, and the signature still has
   to verify under it.
-- **The JWKS document's contents**, to the extent the endpoint serving it is compromised or
-  spoofed. This is why `http.py`'s `get_json` hardens the fetch itself: an explicit
-  `ssl.create_default_context()` for certificate and hostname verification, a custom
-  `HTTPRedirectHandler` that refuses an `https`-to-`http` downgrade and caps the redirect
-  count, and a response body size cap so a hostile or compromised endpoint cannot exhaust
-  memory by serving an unbounded body.
+- **The JWKS document's contents.** This has two layers of defense, for two different
+  threats. Against a compromised or spoofed endpoint, `http.py`'s `get_json` hardens the
+  fetch itself: an explicit `ssl.create_default_context()` for certificate and hostname
+  verification, a custom `HTTPRedirectHandler` that refuses an `https`-to-`http` downgrade
+  and caps the redirect count, and a response body size cap so a hostile or compromised
+  endpoint cannot exhaust memory by serving an unbounded body. That protects the channel,
+  not the contents: an authentic JWKS document from the real endpoint can still be hostile
+  in what it contains, so the JWT verification layer defends the contents directly. The
+  `kty`-to-algorithm-family check ([JWT verification](./jwt-verification.md)) means a JWKS
+  entry cannot be substituted for a weaker key type than the algorithm demands, and the
+  ECDSA coordinate size used to decode a signature is derived from the **algorithm name**,
+  never from the JWK's `crv` field, so a hostile JWKS cannot substitute a weaker curve than
+  the algorithm the caller allowed implies.
+- **`jwks_uri`.** It arrives inside a fetched remote document (the OIDC discovery
+  document) and determines where key material is fetched from next, so it belongs in this
+  list alongside the token and the JWKS contents rather than with the fixed configuration
+  below. Its scheme is pinned to match the domain's `use_https` setting for exactly this
+  reason: an unpinned `jwks_uri` would let a compromised discovery document redirect key
+  fetches to an `http` endpoint even when the domain is configured for `https`.
 
 ### Not attacker-controlled
 
@@ -34,9 +47,12 @@ request, and the JWKS document it fetches to check that token against.
 - **The algorithm allowlist.** `algorithms` is supplied by the caller, not read from the
   token; this is what makes the `alg: none` and algorithm-confusion defenses in
   [JWT verification](./jwt-verification.md) possible in the first place.
-- **The TLS connection to the JWKS endpoint**, given the hardening in `http.py` above: an
-  attacker cannot pass off an untrusted certificate or downgrade the connection without
-  that hardening flagging it.
+- **The TLS connection to the JWKS endpoint, when `use_https` is left at its default.**
+  Given the hardening in `http.py` above, an attacker cannot pass off an untrusted
+  certificate or downgrade the connection without that hardening flagging it. This
+  protection is opt-out, not load-bearing by default: `DomainConfig(use_https=False)`
+  removes TLS from the fetch entirely, and everything downstream of that choice is the
+  application owner's decision, not this library's defense.
 
 ## What is out of scope
 

@@ -58,6 +58,8 @@ An application that accepts tokens from more than one issuer, such as a staging 
 production tenant, lists more than one `DomainConfig`:
 
 ```python
+from armasec_lite.schemas import DomainConfig
+
 armasec = Armasec(
     domain_configs=[
         DomainConfig(
@@ -87,6 +89,8 @@ the scope check. It is read with `getattr(token_payload, key)`, so it can match 
 `TokenPayload` field or any claim carried in `extra`:
 
 ```python
+from armasec_lite.schemas import DomainConfig
+
 armasec = Armasec(
     domain_configs=[
         DomainConfig(

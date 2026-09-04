@@ -13,8 +13,9 @@ Python 3.12 or newer.
 uv add armasec-lite
 ```
 
-This installs the two runtime dependencies: `fastapi` and `cryptography`. Nothing else
-lands in your environment.
+This installs the three direct runtime dependencies: `fastapi`, `cryptography` and
+`pydantic`. There is no `python-jose`, `httpx`, `respx`, `pytest`, `py-buzz`, `snick`,
+`auto-name-enum` or `pluggy`.
 
 ## The `test` extra
 
