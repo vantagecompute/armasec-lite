@@ -151,6 +151,36 @@ def test_refresh_jwks_allowed_again_after_the_interval(fake_get):
     assert calls.count(JWKS_URL) == 3
 
 
+def test_refresh_jwks_rate_limit_holds_when_the_provider_is_failing(fake_get, monkeypatch):
+    """
+    A failing refetch must still advance the rate-limit clock. `kid` is attacker
+    controlled, so if a failed refresh left the clock untouched, unknown-kid tokens would
+    each trigger an outbound request against an already-degraded provider.
+    """
+    calls, _ = fake_get
+    loader = OpenidConfigLoader(DOMAIN)
+    _ = loader.jwks
+    before = calls.count(JWKS_URL)
+
+    def _boom(url, *, timeout=10.0):
+        calls.append(url)
+        raise AuthenticationError("provider is down")
+
+    monkeypatch.setattr(loader_module.http, "get_json", _boom)
+
+    with pytest.raises(ArmasecError):
+        loader.refresh_jwks()
+
+    # The failed attempt stamped the clock, so these three are rate limited no-ops that
+    # hand back the cached key set instead of reaching the network again.
+    for _ in range(3):
+        assert [k.kid for k in loader.refresh_jwks().keys] == ["one"]
+
+    assert calls.count(JWKS_URL) == before + 1, (
+        "a failing provider must not defeat the refresh rate limit"
+    )
+
+
 def test_first_refresh_is_never_rate_limited_by_the_initial_load(fake_get):
     """
     A rotation encountered shortly after startup must still recover. The interval governs

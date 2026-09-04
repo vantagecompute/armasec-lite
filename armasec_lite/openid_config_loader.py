@@ -197,10 +197,17 @@ class OpenidConfigLoader:
                 return self._jwks
 
             self.debug_logger("Refreshing jwks")
-            with AuthenticationError.handle_errors(
-                f"Failed to refresh jwks for domain '{self.domain}'"
-            ):
-                data = self._load_openid_resource(str(config.jwks_uri))
-                self._jwks = JWKs.model_validate(data)
-            self._last_refresh_at = time.monotonic()
-            return self._jwks
+            try:
+                with AuthenticationError.handle_errors(
+                    f"Failed to refresh jwks for domain '{self.domain}'"
+                ):
+                    data = self._load_openid_resource(str(config.jwks_uri))
+                    refreshed = JWKs.model_validate(data)
+                    self._jwks = refreshed
+                    return refreshed
+            finally:
+                # Stamped even when the fetch fails. Otherwise a provider returning errors
+                # leaves the clock un-advanced and every unknown-kid token triggers another
+                # outbound request, which is the flood this limit exists to stop. `kid`
+                # comes from the unverified header, so an unauthenticated caller drives it.
+                self._last_refresh_at = time.monotonic()
