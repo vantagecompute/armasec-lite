@@ -1,0 +1,71 @@
+[project]
+name = "armasec-lite"
+version = "0.1.0"
+description = "Injectable FastAPI auth via OIDC, with two dependencies"
+authors = [{name = "Vantage Compute", email = "info@vantagecompute.ai"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.12"
+keywords = ["fastapi", "auth", "oidc", "oauth2", "security", "jwt"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Security",
+]
+dependencies = [
+    "fastapi>=0.141.1,<1",
+    "cryptography>=50.0.1,<51",
+]
+
+[project.urls]
+Homepage = "https://github.com/vantagecompute/armasec-lite"
+Repository = "https://github.com/vantagecompute/armasec-lite"
+
+[project.optional-dependencies]
+test = ["pytest>=9.1.1,<10"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1,<10",
+    "pytest-asyncio>=1.4.0,<2",
+    "pytest-cov>=7.1.0,<8",
+    "pyjwt>=2.13.0,<3",
+    "httpx2>=2.12.0,<3",
+    "mypy>=2.3.1,<3",
+    "ruff>=0.16.6,<1",
+]
+bench = [
+    "plotly>=6,<7",
+    "armasec==3.0.3",
+]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests/unit"]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires the docker compose comparison stack to be running",
+]
+
+[tool.ruff]
+line-length = 100
+# docusaurus/vendor is a vendored git submodule, not code this project owns or can fix;
+# its own repository lints it. docs/superpowers holds planning and spec prose (ruff 0.16
+# lints and formats fenced Python in Markdown by default), not shipped code or docs.
+extend-exclude = ["docusaurus/vendor", "docs/superpowers"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["armasec_lite"]

@@ -60,10 +60,21 @@ fmt:
 lint:
     uv run ruff check .
     uv run ruff format --check .
+    uv run mypy armasec_lite
+
+# Run the unit suite with coverage, emitting the XML the docs site reads.
+test-cov:
+    uv run pytest tests/unit --cov=armasec_lite --cov-report=xml --junitxml=junit.xml
+
+# Compare against upstream armasec. Not implemented yet.
+compare-legacy:
+    @echo "The legacy comparison harness is not implemented yet."
+    @echo "See docs/superpowers/specs/2026-09-04-armasec-lite-design.md"
+    @exit 1
 
 # Type-check the workspace.
 typecheck:
-    uv run ty check packages services jobs
+    uv run mypy armasec_lite
 
 # Everything the "check" CI job runs, plus the synth and catalog jobs it does not share
 # a runner with. Not everything CI runs: commitlint needs the PR's base and head shas,
@@ -84,7 +95,9 @@ test-functional:
 test-integration:
     uv run pytest tests/integration -q -m integration
 
-test: test-unit test-functional
+# Run the unit suite. Never touches Docker.
+test *ARGS:
+    uv run pytest tests/unit {{ARGS}}
 
 # --- catalog -------------------------------------------------------------------------
 
