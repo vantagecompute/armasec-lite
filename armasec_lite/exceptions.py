@@ -19,7 +19,7 @@ hierarchy here is worth reading rather than skimming:
 A third party plugin raising its own `ArmasecError` subclass gets the same treatment, so a
 plugin can answer 402 or any other status by declaring it on the error it raises.
 
-## The two py-buzz replacements
+### The two py-buzz replacements
 
 Only two py-buzz APIs are reimplemented here, because only two are used.
 `require_condition` raises when an expression is falsey. `handle_errors` is a context

@@ -7,7 +7,7 @@ handler runs. It returns a `TokenPayload` on success and raises an `HTTPExceptio
 every failure, so a route handler that runs at all has already been authenticated and
 authorized.
 
-## Where it sits in the request path
+### Where it sits in the request path
 
 `Armasec.lockdown()` builds and memoizes these; a route declares one as a dependency. On
 the first request that reaches a given instance, `__call__` builds a `TokenManager` per
@@ -15,7 +15,7 @@ configured domain, each wrapping a `TokenDecoder` over a JWKS fetched by a share
 `OpenidConfigLoader`. From then on the instance holds those managers and does no network
 work at all.
 
-## The executor hop
+### The executor hop
 
 That first load is synchronous network work, and it runs in an executor rather than on
 the event loop. Upstream armasec calls synchronous `httpx.get` directly inside this
@@ -27,7 +27,7 @@ pure in-memory work: unpack a header, verify a signature, compare some sets. Hop
 thread for that would add a scheduling round trip to every authenticated request and buy
 nothing.
 
-## What failure looks like
+### What failure looks like
 
 Each stage catches broadly and translates through `_http_exception`, which reads
 `status_code` and `detail` off the error when it carries them. So an `AuthenticationError`

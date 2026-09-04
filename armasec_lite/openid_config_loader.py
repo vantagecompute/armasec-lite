@@ -7,7 +7,7 @@ that the request path touches nothing here except `refresh_jwks`.
 
 Three things here are not in upstream armasec, and all three are invisible from the API.
 
-## The loader cache is process-wide
+### The loader cache is process-wide
 
 Upstream builds one loader per `TokenSecurity`, so an app with ten distinct `lockdown()`
 scope sets against one domain performs ten independent loads, or twenty HTTP requests.
@@ -23,7 +23,7 @@ key, so the first caller's logger is the one the shared loader keeps.
 `clear_cache()` drops the whole mapping. A process-wide cache is a test-isolation hazard,
 so the pytest extension calls it on entry to and exit from its mock provider.
 
-## The cold fetch is guarded by a lock
+### The cold fetch is guarded by a lock
 
 Upstream has none, so N concurrent first requests all fetch simultaneously. The lock is a
 `threading.Lock` and deliberately not an `asyncio.Lock`: an `asyncio.Lock` binds to the
@@ -32,7 +32,7 @@ in an executor thread, so the worker holds this lock and the event loop thread i
 blocked on it. Both properties check inside the lock as well as outside it, so a thread
 that waited does not repeat a fetch another thread already finished.
 
-## The JWKS is refetchable, within a rate limit
+### The JWKS is refetchable, within a rate limit
 
 Upstream caches it for the process lifetime, so a provider key rotation returns 401 on
 every request until someone restarts the service. `refresh_jwks` is wired into

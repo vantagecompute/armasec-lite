@@ -11,7 +11,7 @@ Being the single choke point is also what makes the pytest extension's mock prov
 possible: it swaps `armasec_lite.http.get_json` for a routing table, and there is nothing
 else for it to intercept.
 
-## The scheme guard is load-bearing
+### The scheme guard is load-bearing
 
 `urllib.request.build_opener()` installs `FileHandler` among its defaults, so an opener
 will happily read a `file://` URL and hand back its contents. The check at the top of
@@ -21,7 +21,7 @@ arbitrary local file read, and the file's contents would be parsed as the keys t
 who is authenticated. `jwks_uri` arrives inside a document fetched over the network and is
 then fetched in turn, so it gets both guards.
 
-## Redirects
+### Redirects
 
 `_NoDowngradeRedirectHandler` refuses to follow a redirect from https to http, or off http
 and https altogether. urllib crosses schemes freely by default. A provider that is
@@ -31,7 +31,7 @@ unconditionally rather than only for an https origin, because a `use_https=False
 starts on http and the stdlib handler would otherwise follow a redirect from there onto
 ftp or any other scheme it knows.
 
-## Constants
+### The constants
 
 `MAX_BODY_BYTES` (1 MiB) caps how much of a response is read. A compromised or hostile
 discovery endpoint should not be able to exhaust memory in a process that expects a few

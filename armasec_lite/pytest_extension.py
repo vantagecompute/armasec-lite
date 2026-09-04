@@ -5,7 +5,7 @@ Registered as a `pytest11` entry point, so installing `armasec-lite[test]` makes
 fixture here available without an import or a conftest entry. This is public surface: the
 fixture names below are what a consumer's test suite is written against.
 
-## How a consumer uses it
+### How a consumer uses it
 
 Two fixtures do the work. `mock_openid_server` stands in for the OIDC provider, and
 `build_rs256_token` mints tokens the mocked provider's key will verify. A typical test
@@ -32,7 +32,7 @@ the mocked JWKS at once, which is usually what a test wants; to make them disagr
 second domain or a deliberately broken provider. It returns a context manager rather than a
 fixture.
 
-## How the mock works, and one hazard it handles
+### How the mock works, and one hazard it handles
 
 The mock replaces `armasec_lite.http.get_json` with a routing table rather than standing up
 a server or intercepting sockets. armasec makes exactly two requests, both through that one

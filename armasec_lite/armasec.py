@@ -9,7 +9,7 @@ every declaration.
 Using it is not essential. `TokenSecurity` works perfectly well on its own; this only
 removes boilerplate.
 
-## Memoization, and why it is not `lru_cache`
+### Memoization, and why it is not `lru_cache`
 
 `lockdown()` caches on `(scopes, permission_mode, skip_plugins)` in a per-instance dict, so
 ten routes requiring the same scopes share one `TokenSecurity` and therefore one set of
@@ -25,7 +25,7 @@ Note that the scopes tuple is used as given, so `lockdown("a", "b")` and `lockdo
 "a")` are different keys and produce two equivalent instances. Harmless, just slightly
 wasteful.
 
-## Construction is inert
+### Construction is inert
 
 Nothing here contacts a provider. `DomainConfig` validation happens at construction, so a
 missing or empty domain is caught immediately, but the first network call waits for the

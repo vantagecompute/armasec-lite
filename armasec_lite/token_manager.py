@@ -6,7 +6,7 @@ The thin layer between `TokenSecurity`, which holds one manager per configured d
 token is found in a request's headers, and which claim constraints the decoder is asked to
 enforce.
 
-## Header handling
+### Header handling
 
 The header name and scheme are class attributes, `header_key` ("Authorization") and
 `auth_scheme` ("bearer"), so they are shared by every instance and are what
@@ -18,7 +18,7 @@ The lookup falls back to a case-insensitive scan when a direct `get` misses. Sta
 directly by tests and by consumers with dicts they built themselves. Making them match our
 capitalization would be a needless trap.
 
-## Issuer and audience
+### Issuer and audience
 
 `verify_issuer` defaults to True, which is a deliberate departure: upstream armasec loads
 the provider's issuer and then never checks a token against it. Pass False for exact

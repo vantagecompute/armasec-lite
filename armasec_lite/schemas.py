@@ -6,7 +6,7 @@ Two of these describe documents fetched from the provider (`OpenidConfig` and `J
 and `PermissionMode`). These are close to upstream armasec's own definitions, with three
 deliberate departures, each of which looks like a mistake until you know why.
 
-## `JWK` requires only `kty` and `kid`
+### `JWK` requires only `kty` and `kid`
 
 The members a particular key type needs, such as `n` and `e` for RSA or `crv`, `x` and `y`
 for EC, are validated later by `armasec_lite.jwt`, once the algorithm in use is known.
@@ -15,7 +15,7 @@ alongside its RSA keys fails to parse its entire JWKS document, and every token 
 rejected. Validation is not skipped by moving it, only deferred to the point where the
 requirement is actually known.
 
-## `OpenidConfig.issuer` is a plain `str`, not `AnyHttpUrl`
+### `OpenidConfig.issuer` is a plain `str`, not `AnyHttpUrl`
 
 `TokenManager` compares it against a token's `iss` claim by exact string equality, so the
 value has to survive byte for byte. Pydantic's URL types normalize: `AnyHttpUrl` appends a
@@ -31,14 +31,14 @@ forgetting to pass the context cannot silently accept a plaintext JWKS endpoint.
 caller that legitimately turns it off is `openid_config_loader.py`, for a domain
 configured with `use_https=False`.
 
-## `DomainConfig.domain` is required and must be non-empty
+### `DomainConfig.domain` is required and must be non-empty
 
 Upstream defaults it to the empty string, which builds the discovery URL
 `https:///.well-known/openid-configuration` and fails at request time with an error that
 says nothing about the real mistake. Rejecting it at construction is worth the small
 departure from upstream's signature.
 
-## Constants
+### The constants
 
 `SUPPORTED_ALGORITHMS` is what `DomainConfig.algorithm` is validated against. It is
 duplicated from `armasec_lite.jwt` rather than imported: `jwt` imports `JWK` from this

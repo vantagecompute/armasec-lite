@@ -6,7 +6,7 @@ authentication bypass, not a bug. Everything except the signature primitive itse
 standard library. `cryptography` provides only the verify and sign operations, because
 that is the part with a long CVE history and no business being hand written.
 
-## The verification order in `decode`
+### The verification order in `decode`
 
 The order of the six steps below is a security property, not an implementation detail.
 Each one exists to make a specific forgery impossible, and several of them only work
@@ -38,14 +38,14 @@ moving work between them, reintroduces the attack the arrangement defends agains
 6. **Registered claim checks.** `exp`, `nbf`, `aud` and `iss` are checked against the
    caller's requirements, with `leeway` applied to the two time-based ones.
 
-## Constants
+### The constants
 
 `SUPPORTED_ALGORITHMS` is every algorithm this module can verify: RS, PS, ES and HS at
 256, 384 and 512, plus EdDSA. It bounds what `verify_signature` and `encode` will act on
 at all. It is not itself an allowlist for a route: `decode` takes the permitted
 algorithms from its caller, and `DomainConfig.algorithm` narrows a route to exactly one.
 
-## Two switches worth knowing about
+### Two switches worth knowing about
 
 `_DEFAULT_OPTIONS` exposes `verify_signature`, a switch that turns the signature check
 off, so `decode(..., options={"verify_signature": False})`, and therefore

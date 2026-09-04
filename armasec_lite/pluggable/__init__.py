@@ -6,7 +6,7 @@ cover what armasec used pluggy for: a marker decorator, registration by module o
 discovery through entry points, and calling each implementation with just the arguments
 it declares.
 
-## Writing a plugin
+### Writing a plugin
 
 Mark a function named `armasec_plugin_check` with `@hookimpl` and advertise its module
 under the `armasec` entry point group. `plugin_manager.load_entry_points()` runs at import
@@ -15,7 +15,7 @@ anything. Raising from the hook denies the request, and raising an `ArmasecError
 chooses the status the client sees. See `armasec_lite.pluggable.hookspecs` for the full
 signature.
 
-## Each implementation receives only what it declares
+### Each implementation receives only what it declares
 
 This is the one pluggy behavior armasec actually depends on, and it is not a convenience.
 The documented example plugin declares only `token_payload`, so handing it `request` and
@@ -26,7 +26,7 @@ The accepted names are computed once, at registration, and cached on the registr
 record. Dispatch happens on the authenticated request path, and `inspect.signature` is not
 cheap enough to call there.
 
-## Other behaviors worth knowing
+### Other behaviors worth knowing
 
 Implementations run most recently registered first, matching pluggy. Exceptions propagate
 rather than being collected, because raising is how a plugin denies a request, and the

@@ -5,7 +5,7 @@ Sits between `TokenManager`, which pulls the token out of a header, and
 `armasec_lite.jwt`, which does the cryptography. Its job is key selection, option
 merging, and mapping the resulting claim dictionary onto a `TokenPayload`.
 
-## Key selection is not trust
+### Key selection is not trust
 
 `get_decode_key` reads the token's `kid` from its unverified header, so the value is
 attacker controlled. It is used to look a key up in the JWKS and for nothing else: the key
@@ -13,7 +13,7 @@ it selects still has to verify the signature, so choosing a different one only m
 token fails. The same is true of the `alg` in that header, which is ignored entirely; the
 algorithm comes from `DomainConfig` by way of the constructor.
 
-## Key rotation
+### Key rotation
 
 An unknown `kid` is what a provider key rotation looks like from here. When a
 `jwks_refresher` is configured, which `TokenSecurity` always does, an unmatched `kid`
@@ -23,7 +23,7 @@ cannot be turned into a flood of outbound requests. Without a refresher the deco
 fails, which is upstream armasec's behavior: every request returns 401 until the service is
 restarted.
 
-## Two error types, two very different statuses
+### Two error types, two very different statuses
 
 Signature and claim failures are `AuthenticationError` and answer 401. A failure to map
 the decoded claims onto a `TokenPayload`, which in practice means a `permission_extractor`

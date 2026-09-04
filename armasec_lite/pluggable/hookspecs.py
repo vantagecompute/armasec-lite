@@ -6,7 +6,7 @@ The contract a plugin author writes against. There is exactly one hook,
 signature and documents the semantics, and its body is empty because nothing here is ever
 called. `armasec_lite.pluggable` dispatches to implementations, not to this.
 
-## Writing an implementation
+### Writing an implementation
 
 Define a function named `armasec_plugin_check` in your plugin's module, decorate it with
 `armasec_lite.pluggable.hookimpl`, and advertise the module under the `armasec` entry point
@@ -28,7 +28,7 @@ arguments it names, so the example above never sees `request` or `debug_logger`.
 implementation declaring `**kwargs` receives all three. Adding a parameter to this
 specification is therefore not a breaking change for existing plugins.
 
-## Denying a request
+### Denying a request
 
 Return to allow, raise to deny. There is no truthy return value; a hook that returns False
 has allowed the request.
@@ -47,7 +47,7 @@ other request in the process.
 A route locked down with `skip_plugins=True` bypasses every implementation, so a plugin
 cannot assume it runs on every secured route.
 
-## Constants
+### The constants
 
 `HOOK_NAME` is the single hook name, "armasec_plugin_check". `PluginManager` looks a
 plugin's attribute up by it, so the constant, this specification and the implementations

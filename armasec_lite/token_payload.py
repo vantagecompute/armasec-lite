@@ -6,7 +6,7 @@ actually receives from its dependency. Everything else in the library exists to 
 one, and it is only ever constructed after a signature has verified: a `TokenPayload` in
 hand means the claims on it came from the provider.
 
-## `extra="allow"` is load-bearing
+### `extra="allow"` is load-bearing
 
 The five declared fields are the ones armasec itself uses. Every other claim in the token
 stays reachable as an attribute, because `extra="allow"` puts unknown members on the model
@@ -19,7 +19,7 @@ The consequence worth keeping in mind is that an attribute that is present on on
 provider's tokens may be absent on another's, and the model will not tell you in advance.
 Read unknown claims with `getattr(payload, name, default)`.
 
-## Aliases
+### Aliases
 
 `expire` and `client_id` accept two source names each, via `AliasChoices`: the registered
 claim (`exp`, `azp`) and the friendlier name armasec's own API has always used. So a token
