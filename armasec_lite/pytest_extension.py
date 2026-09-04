@@ -1,0 +1,339 @@
+"""
+A pytest plugin providing fixtures for testing armasec-secured applications.
+
+Registered as a `pytest11` entry point, so installing `armasec-lite[test]` makes every
+fixture here available without an import or a conftest entry.
+
+The mock provider replaces `armasec_lite.http.get_json` with a routing table rather than
+standing up a server or intercepting sockets. armasec makes exactly two requests, both
+through that one function, so there is nothing a heavier mock would additionally cover.
+"""
+
+from __future__ import annotations
+
+import textwrap
+from collections import namedtuple
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from typing import Any
+from uuid import uuid4
+
+import pytest
+
+from armasec_lite import http, jwt
+from armasec_lite.openid_config_loader import OpenidConfigLoader, clear_cache
+from armasec_lite.schemas import DomainConfig
+
+MockOpenidRoutes = namedtuple("MockOpenidRoutes", ["openid_config_route", "jwks_route"])
+
+
+class _Route:
+    """
+    One mocked URL, counting the calls made to it.
+
+    Exposes `called` and `call_count` so assertions written against respx's route API
+    port over unchanged.
+    """
+
+    def __init__(self, url: str, payload: dict[str, Any]):
+        """
+        Args:
+            url:     The URL this route answers.
+            payload: The JSON body to return.
+        """
+        self.url = url
+        self.payload = payload
+        self.call_count = 0
+
+    @property
+    def called(self) -> bool:
+        """Whether this route was requested at least once."""
+        return self.call_count > 0
+
+
+@pytest.fixture()
+def rs256_domain() -> str:
+    """
+    Provide a domain for use in other fixtures.
+
+    The value has nothing to do with an actual domain name.
+    """
+    return "armasec.dev"
+
+
+@pytest.fixture()
+def rs256_domain_config(rs256_domain: str) -> DomainConfig:
+    """
+    Provide the DomainConfig for the default rs256 domain.
+
+    Args:
+        rs256_domain: An implicit fixture parameter.
+    """
+    return DomainConfig(domain=rs256_domain, audience="https://this.api")
+
+
+@pytest.fixture()
+def rs256_iss(rs256_domain: str) -> str:
+    """
+    Provide an issuer claim for use in other fixtures.
+
+    Args:
+        rs256_domain: An implicit fixture parameter.
+    """
+    return f"https://{rs256_domain}"
+
+
+@pytest.fixture()
+def rs256_kid() -> str:
+    """Provide a KID header value for use in other fixtures."""
+    return "SAMPLE_KID"
+
+
+@pytest.fixture()
+def rs256_sub() -> str:
+    """Provide a sub claim for use in other fixtures."""
+    return "SAMPLE_SUB"
+
+
+@pytest.fixture()
+def rs256_private_key() -> bytes:
+    """
+    Provide a pre-generated private key for RS256 signing in other fixtures.
+
+    This key is public knowledge and exists only so that tests are reproducible. Never
+    use it for anything real.
+    """
+    return (
+        textwrap.dedent(
+            """
+        -----BEGIN RSA PRIVATE KEY-----
+        MIIEpAIBAAKCAQEAw408+QDZ10idz4ytJtwFQE4YgmrjvCoEXjtTUWQ3H4nWAAYQ
+        +oE9xpr/gosNiFMuyRburvXT+Rkq8ry8tWoUzN2zViaarot+Tt9I71sVlnIsbtDZ
+        +XrteMvBwjARn/MEAQEwDLvVzrBnAZrOTwrIkznyJttZh7STrt6y5X91i2MMm3xu
+        9QK90kpu3rymAyT5V+AEIRzZai/ZT4YfLDutXulOVlWPQ55Xww1mbheGQ99fUMo5
+        LmkxM5Jsz8ulIVvq/G/8guiKwAPJN/8S34NbkgL5GoeXT8uNDkbhtkLh5+o2T4EL
+        9/ODKHqx46pHgUmBiC6wNv6uJXdH7qpaqhPR3QIDAQABAoIBABeyl/788Wk7bZRn
+        UdxxsVk3nZTAa1S0Ks9YlSI56MwzofFiys/wtZHJ2sjxHPS2T+cilk4xkDyRpjjA
+        UoYRku+4tjDsgLZCRU49lNMc0KLotyW+vYuUMA8BcjucI6akhomwoSgJ40Em83So
+        U/QUNHZTAVtgHZtqcLMyXa+eIJqBcfsMHFkCgSF8LSD/XkRBMm1SREswDw6KqQQ0
+        sZ/8TVF9sJTi3/OG8m5OfI+44AYDaMH5wKoOBcR3FBln+dEutB6JuRjmpnEjQpIT
+        DggULc+Dzb/c75yhT1qZSEL3Z99JQTbytPm6boNGKmzUE9HCoY84wKfnhUDocFKW
+        jnHMmKkCgYEA7/gRAtLjbJW1rbxw8xN3cyOZEJsMFt4mXMmne6nDTttVKb0wUuXJ
+        H8prKAXDOzadAZgPeGJXVSNgGoNeNtkmEKDtysrRiZbWiTRxYPE36MrHFGOywjTn
+        tP8qMJHmHYkxS16nqrOl0znUWv6Q6/qwd59Utuu4IJF/CxqP3Z6HPssCgYEA0J2M
+        1gRgGj8NnGoIKS58gc3Aa5RdqWKoeiyXeN/zRDfMCKpPsVykvZJb4cLcEdcwe9kC
+        3xpgIPaTZCPwhJ1rYiZ0/Xr7oIf0E66IeEKs/bchKcT9+sSaWgc5/zQ7aQ/XpwzU
+        nKCTTeMGFUyulCIkoe2tLEQ+Mw1OphIXv17fNPcCgYEAjWgVxh81ivgRjiZ8PJEd
+        E4lHmmRzVEpmOslN225nO+G9ppHolwD3ardiO7xhllQRYy4S97KjmfT1ncoJy7Jc
+        XvImDhlELprnIwT3RtP+STys4ZP6c7yvSZYPa32eJ4t/s9U8YjfooLb0LwbRqW0Z
+        bfRC/GOdJfv27Dkjy8muEs8CgYEAo+oHDOonMLg2U54kh2cVQVCPTngnF76DLmv3
+        IGym0gUddfmL4Iowjxt+wma/T+1LFSSwUuiAe6YCrX5nr2uZQmeBKOIG8F2idAyB
+        Ai0xi7Dmh9FW1kDAHtjqwxEhVS2zfnhgXij1VQ96aiX0TkR9kBYWKV/9l1NvZqF0
+        s1MyAoUCgYA0wfJrCTXdWitkyfxApcmoTxt0ljqUwO6F5fhojf8PU1ouglgkRXtm
+        1rSDGp7YUfODhWNSsN2P/eaDybcZo+TGtLQJ5Bai3Qxqh8xPaKCsSZbcPRLRP0w5
+        CbTvFEyj6EBEH+TJL/Loa4hKFuAk7ErBAtzMCw6LchTjB/OF+dUusA==
+        -----END RSA PRIVATE KEY-----
+        """
+        )
+        .strip()
+        .encode("utf-8")
+    )
+
+
+@pytest.fixture()
+def rs256_public_key() -> bytes:
+    """
+    Provide the matching pre-generated public key.
+    """
+    return (
+        textwrap.dedent(
+            """
+        -----BEGIN RSA PUBLIC KEY-----
+        MIIBCgKCAQEAw408+QDZ10idz4ytJtwFQE4YgmrjvCoEXjtTUWQ3H4nWAAYQ+oE9
+        xpr/gosNiFMuyRburvXT+Rkq8ry8tWoUzN2zViaarot+Tt9I71sVlnIsbtDZ+Xrt
+        eMvBwjARn/MEAQEwDLvVzrBnAZrOTwrIkznyJttZh7STrt6y5X91i2MMm3xu9QK9
+        0kpu3rymAyT5V+AEIRzZai/ZT4YfLDutXulOVlWPQ55Xww1mbheGQ99fUMo5Lmkx
+        M5Jsz8ulIVvq/G/8guiKwAPJN/8S34NbkgL5GoeXT8uNDkbhtkLh5+o2T4EL9/OD
+        KHqx46pHgUmBiC6wNv6uJXdH7qpaqhPR3QIDAQAB
+        -----END RSA PUBLIC KEY-----
+        """
+        )
+        .strip()
+        .encode("utf-8")
+    )
+
+
+@pytest.fixture()
+def rs256_jwk(rs256_kid: str) -> dict[str, Any]:
+    """
+    Provide the JWK matching the pre-generated key pair, as a plain dict.
+
+    This is a plain dict rather than a `JWK` instance, deliberately: it is what a JWKS
+    document actually contains, so it can be handed straight to the mock server and to
+    `JWK.model_validate` alike.
+
+    Args:
+        rs256_kid: An implicit fixture parameter.
+    """
+    modulus = (
+        "w408-QDZ10idz4ytJtwFQE4YgmrjvCoEXjtTUWQ3H4nWAAYQ-oE9xpr_gosNiFMuyRburvXT-Rkq8ry8tWoU"
+        "zN2zViaarot-Tt9I71sVlnIsbtDZ-XrteMvBwjARn_MEAQEwDLvVzrBnAZrOTwrIkznyJttZh7STrt6y5X91"
+        "i2MMm3xu9QK90kpu3rymAyT5V-AEIRzZai_ZT4YfLDutXulOVlWPQ55Xww1mbheGQ99fUMo5LmkxM5Jsz8ul"
+        "IVvq_G_8guiKwAPJN_8S34NbkgL5GoeXT8uNDkbhtkLh5-o2T4EL9_ODKHqx46pHgUmBiC6wNv6uJXdH7qpa"
+        "qhPR3Q"
+    )
+    return {"alg": "RS256", "kty": "RSA", "kid": rs256_kid, "n": modulus, "e": "AQAB"}
+
+
+@pytest.fixture
+def rs256_jwks_uri(rs256_domain: str) -> str:
+    """
+    Provide a jwks uri for use in other fixtures.
+
+    Args:
+        rs256_domain: An implicit fixture parameter.
+    """
+    return f"https://{rs256_domain}/.well-known/jwks.json"
+
+
+@pytest.fixture
+def rs256_openid_config(rs256_iss: str, rs256_jwks_uri: str) -> dict[str, Any]:
+    """
+    Provide an openid configuration document for use in other fixtures.
+
+    Args:
+        rs256_iss:      An implicit fixture parameter.
+        rs256_jwks_uri: An implicit fixture parameter.
+    """
+    return {"issuer": rs256_iss, "jwks_uri": rs256_jwks_uri}
+
+
+@pytest.fixture
+def build_rs256_token(
+    rs256_private_key: bytes,
+    rs256_iss: str,
+    rs256_sub: str,
+    rs256_kid: str,
+) -> Callable[..., str]:
+    """
+    Provide a helper that builds a JWT signed with the pre-generated private key.
+
+    Args:
+        rs256_private_key: An implicit fixture parameter.
+        rs256_iss:         An implicit fixture parameter.
+        rs256_sub:         An implicit fixture parameter.
+        rs256_kid:         An implicit fixture parameter.
+    """
+    base_claims = {"iss": rs256_iss, "sub": rs256_sub}
+    base_headers = {"kid": rs256_kid}
+
+    def _helper(
+        claim_overrides: dict[str, Any] | None = None,
+        headers_overrides: dict[str, Any] | None = None,
+        format_keycloak: bool = False,
+    ) -> str:
+        """
+        Encode a jwt with the default claims and headers, overridden by the arguments.
+
+        Args:
+            claim_overrides:   Claims to add, overriding defaults on collision.
+            headers_overrides: Headers to add, overriding defaults on collision.
+            format_keycloak:   If set, move "permissions" from the claim overrides into
+                               the position Keycloak uses, generating a random "azp"
+                               client id when one is not supplied.
+        """
+        claim_overrides = dict(claim_overrides or {})
+        headers_overrides = dict(headers_overrides or {})
+
+        now = int(datetime.now(UTC).timestamp())
+
+        if format_keycloak and "permissions" in claim_overrides:
+            test_client = claim_overrides.get("azp", f"test-client-{uuid4()}")
+            claim_overrides["azp"] = test_client
+            claim_overrides["resource_access"] = {
+                test_client: {"roles": claim_overrides.pop("permissions")}
+            }
+
+        return jwt.encode(
+            {"iat": now, "exp": now + 60 * 60, **base_claims, **claim_overrides},
+            rs256_private_key,
+            "RS256",
+            headers={**base_headers, **headers_overrides},
+        )
+
+    return _helper
+
+
+def build_mock_openid_server(
+    domain: str,
+    openid_config: dict[str, Any],
+    jwk: dict[str, Any],
+    jwks_uri: str,
+) -> Callable[..., Any]:
+    """
+    Build a context manager that mocks the openid routes armasec fetches.
+
+    Args:
+        domain:        The domain of the openid server to mock.
+        openid_config: The document returned from the discovery route.
+        jwk:           The key returned from the jwks route.
+        jwks_uri:      The URL of the jwks route to mock.
+
+    Returns:
+        A context manager that, while active, mocks the openid routes.
+    """
+
+    @contextmanager
+    def _helper(
+        domain: str = domain,
+        openid_config: dict[str, Any] = openid_config,
+        jwk: dict[str, Any] = jwk,
+        jwks_uri: str = jwks_uri,
+    ) -> Iterator[MockOpenidRoutes]:
+        config_url = OpenidConfigLoader.build_openid_config_url(domain)
+        config_route = _Route(config_url, openid_config)
+        jwks_route = _Route(jwks_uri, {"keys": [jwk]})
+        routes = {config_url: config_route, jwks_uri: jwks_route}
+
+        original = http.get_json
+
+        def _mocked(url: str, *, timeout: float = http.DEFAULT_TIMEOUT) -> dict[str, Any]:
+            route = routes.get(url)
+            if route is None:
+                raise AssertionError(f"Unmocked request to {url}")
+            route.call_count += 1
+            return route.payload
+
+        # The loader cache is process-wide, so a loader left over from another test would
+        # answer from its own cache and never reach this mock.
+        clear_cache()
+        http.get_json = _mocked
+        try:
+            yield MockOpenidRoutes(config_route, jwks_route)
+        finally:
+            http.get_json = original
+            clear_cache()
+
+    return _helper
+
+
+@pytest.fixture
+def mock_openid_server(
+    rs256_domain: str,
+    rs256_openid_config: dict[str, Any],
+    rs256_jwk: dict[str, Any],
+    rs256_jwks_uri: str,
+) -> Iterator[MockOpenidRoutes]:
+    """
+    Mock an openid server using the other fixtures in this extension.
+
+    Args:
+        rs256_domain:        An implicit fixture parameter.
+        rs256_openid_config: An implicit fixture parameter.
+        rs256_jwk:           An implicit fixture parameter.
+        rs256_jwks_uri:      An implicit fixture parameter.
+    """
+    builder = build_mock_openid_server(rs256_domain, rs256_openid_config, rs256_jwk, rs256_jwks_uri)
+    with builder() as constructed:
+        yield constructed

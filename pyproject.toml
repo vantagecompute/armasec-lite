@@ -30,6 +30,9 @@ Repository = "https://github.com/vantagecompute/armasec-lite"
 [project.optional-dependencies]
 test = ["pytest>=9.1.1,<10"]
 
+[project.entry-points."pytest11"]
+pytest_armasec_lite = "armasec_lite.pytest_extension"
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1,<10",
