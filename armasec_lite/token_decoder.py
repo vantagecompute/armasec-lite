@@ -37,7 +37,10 @@ class TokenDecoder:
             algorithm:               The only algorithm accepted. Defaults to RS256.
             debug_logger:            A callable such as `logger.debug`.
             decode_options_override: Options overriding the default decode behavior, for
-                                     example `{"verify_exp": False}`.
+                                     example `{"verify_exp": False}`. One of them,
+                                     `verify_signature`, turns off authentication
+                                     entirely; it is a testing and debugging switch only.
+                                     See the `armasec_lite.jwt` module docstring.
             permission_extractor:    Optional function that extracts permissions from the
                                      decoded token when they are not a top level claim.
 
