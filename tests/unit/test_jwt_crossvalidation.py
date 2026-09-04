@@ -20,7 +20,7 @@ from armasec_lite.jwt import (
     encode,
 )
 
-RSA_ALGS = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512"]
+from .conftest import ALL_ALGORITHMS, HS_SECRET
 
 
 @pytest.fixture
@@ -40,18 +40,25 @@ def rsa_pub_pem(rsa_private):
     )
 
 
-@pytest.mark.parametrize("algorithm", RSA_ALGS)
-def test_our_token_verifies_under_pyjwt(rsa_pem, rsa_pub_pem, algorithm):
+@pytest.mark.parametrize("algorithm", ALL_ALGORITHMS)
+def test_our_token_verifies_under_pyjwt(key_material, algorithm):
+    """
+    Every supported algorithm, not just the RSA family. This is the direction that pins
+    the ES512 coordinate size deterministically: a wrong constant produces a signature of
+    the wrong width, and an independent verifier refuses it every time rather than only
+    when the integers happen not to fit.
+    """
+    material = key_material(algorithm)
     now = int(time.time())
     token = encode(
         {"sub": "abc", "exp": now + 60, "iss": "https://auth.example.com"},
-        rsa_pem,
+        material.sign_key,
         algorithm,
-        headers={"kid": "rsa-test"},
+        headers={"kid": material.jwk.kid},
     )
     claims = pyjwt.decode(
         token,
-        rsa_pub_pem,
+        material.verify_key,
         algorithms=[algorithm],
         issuer="https://auth.example.com",
         options={"verify_aud": False},
@@ -59,18 +66,20 @@ def test_our_token_verifies_under_pyjwt(rsa_pem, rsa_pub_pem, algorithm):
     assert claims["sub"] == "abc"
 
 
-@pytest.mark.parametrize("algorithm", RSA_ALGS)
-def test_pyjwt_token_verifies_under_us(rsa_pem, rsa_jwk, algorithm):
+@pytest.mark.parametrize("algorithm", ALL_ALGORITHMS)
+def test_pyjwt_token_verifies_under_us(key_material, algorithm):
+    """The same coverage in the other direction, so neither side can drift alone."""
+    material = key_material(algorithm)
     now = int(time.time())
     token = pyjwt.encode(
         {"sub": "abc", "exp": now + 60, "aud": "my-api", "iss": "https://auth.example.com"},
-        rsa_pem,
+        material.sign_key,
         algorithm=algorithm,
-        headers={"kid": "rsa-test"},
+        headers={"kid": material.jwk.kid},
     )
     claims = decode(
         token,
-        rsa_jwk,
+        material.jwk,
         [algorithm],
         audience="my-api",
         issuer="https://auth.example.com",
@@ -175,13 +184,13 @@ def test_our_eddsa_token_verifies_under_pyjwt(ed_private):
 
 def test_hs256_round_trips_through_pyjwt(oct_jwk):
     now = int(time.time())
-    secret = b"s" * 32
+    secret = HS_SECRET
     token = pyjwt.encode({"sub": "abc", "exp": now + 60}, secret, algorithm="HS256")
     assert decode(token, oct_jwk, ["HS256"])["sub"] == "abc"
 
 
 def test_our_hs256_token_verifies_under_pyjwt():
     now = int(time.time())
-    secret = b"s" * 32
+    secret = HS_SECRET
     token = encode({"sub": "abc", "exp": now + 60}, secret, "HS256")
     assert pyjwt.decode(token, secret, algorithms=["HS256"])["sub"] == "abc"

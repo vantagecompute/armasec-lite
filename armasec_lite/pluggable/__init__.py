@@ -12,7 +12,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from importlib.metadata import entry_points
-from typing import Any
+from typing import Any, NamedTuple
 
 from armasec_lite.pluggable.hookspecs import HOOK_NAME, armasec_plugin_check
 
@@ -56,26 +56,62 @@ class _HookRelay:
         Args:
             kwargs: The full argument set from the hook specification.
         """
-        for implementation in self._manager.implementations():
-            implementation(**_filter_kwargs(implementation, kwargs))
+        for implementation, accepted in self._manager.dispatch_targets():
+            if accepted is None:
+                implementation(**kwargs)
+            else:
+                implementation(**{k: v for k, v in kwargs.items() if k in accepted})
 
 
-def _filter_kwargs(func: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+def _accepted_parameters(func: Callable[..., Any]) -> frozenset[str] | None:
     """
-    Reduce a keyword argument set to what a callable actually declares.
+    Name the keyword arguments a callable declares, or None if it takes `**kwargs`.
 
-    This is the one pluggy behavior armasec depends on. The documented example plugin
-    declares only `token_payload`, so handing it `request` and `debug_logger` would be a
-    TypeError rather than a working plugin.
+    Filtering the argument set is the one pluggy behavior armasec depends on: the
+    documented example plugin declares only `token_payload`, so handing it `request` and
+    `debug_logger` would be a TypeError rather than a working plugin. Computed once at
+    registration, because the dispatch that uses it is the authenticated request path and
+    `inspect.signature` is not cheap.
 
     Args:
-        func:   The implementation about to be called.
-        kwargs: The full argument set.
+        func: The implementation being registered.
     """
-    signature = inspect.signature(func)
-    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()):
-        return kwargs
-    return {name: value for name, value in kwargs.items() if name in signature.parameters}
+    parameters = inspect.signature(func).parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return None
+    return frozenset(parameters)
+
+
+class _Registration(NamedTuple):
+    """
+    One registered plugin with its hook resolved.
+
+    Attributes:
+        plugin:         The registered module or object.
+        implementation: Its marked hook, or None when it carries none.
+        accepted:       The keyword arguments the hook declares, or None when it takes
+                        `**kwargs` and should receive everything. Only meaningful when
+                        `implementation` is not None.
+    """
+
+    plugin: Any
+    implementation: Callable[..., Any] | None
+    accepted: frozenset[str] | None
+
+
+def _find_implementation(plugin: Any) -> Callable[..., Any] | None:
+    """
+    Return a plugin's marked hook implementation, or None.
+
+    Args:
+        plugin: The module or object to inspect.
+    """
+    candidate = getattr(plugin, HOOK_NAME, None)
+    if candidate is None or not callable(candidate):
+        return None
+    # A bound method carries the marker on its underlying function.
+    target = getattr(candidate, "__func__", candidate)
+    return candidate if getattr(target, _MARKER, False) else None
 
 
 class PluginManager:
@@ -85,12 +121,15 @@ class PluginManager:
 
     def __init__(self) -> None:
         """Create an empty manager."""
-        self._plugins: list[Any] = []
+        self._registrations: list[_Registration] = []
         self.hook = _HookRelay(self)
 
     def register(self, plugin: Any, name: str | None = None) -> None:
         """
         Register a module or object carrying marked hook implementations.
+
+        The hook and its accepted argument names are resolved here, once, rather than on
+        every dispatch. Dispatch happens on the authenticated request path.
 
         Registering the same plugin twice is a no-op, so an import executed more than once
         does not double every check.
@@ -99,8 +138,11 @@ class PluginManager:
             plugin: The module or object to register.
             name:   Accepted for compatibility with pluggy's signature. Unused.
         """
-        if plugin not in self._plugins:
-            self._plugins.append(plugin)
+        if any(registration.plugin == plugin for registration in self._registrations):
+            return
+        implementation = _find_implementation(plugin)
+        accepted = None if implementation is None else _accepted_parameters(implementation)
+        self._registrations.append(_Registration(plugin, implementation, accepted))
 
     def unregister(self, plugin: Any) -> None:
         """
@@ -109,27 +151,29 @@ class PluginManager:
         Args:
             plugin: The module or object to remove.
         """
-        if plugin in self._plugins:
-            self._plugins.remove(plugin)
+        self._registrations = [
+            registration for registration in self._registrations if registration.plugin != plugin
+        ]
 
     def get_plugins(self) -> list[Any]:
         """Return the registered plugins, in registration order."""
-        return list(self._plugins)
+        return [registration.plugin for registration in self._registrations]
 
     def implementations(self) -> list[Callable[..., Any]]:
         """
         Collect every marked implementation, most recently registered first.
         """
-        found: list[Callable[..., Any]] = []
-        for plugin in reversed(self._plugins):
-            candidate = getattr(plugin, HOOK_NAME, None)
-            if candidate is None or not callable(candidate):
-                continue
-            # A bound method carries the marker on its underlying function.
-            target = getattr(candidate, "__func__", candidate)
-            if getattr(target, _MARKER, False):
-                found.append(candidate)
-        return found
+        return [target for target, _ in self.dispatch_targets()]
+
+    def dispatch_targets(self) -> list[tuple[Callable[..., Any], frozenset[str] | None]]:
+        """
+        Pair every marked implementation with its accepted argument names, LIFO.
+        """
+        return [
+            (registration.implementation, registration.accepted)
+            for registration in reversed(self._registrations)
+            if registration.implementation is not None
+        ]
 
     def load_entry_points(self, group: str = "armasec") -> None:
         """

@@ -7,6 +7,7 @@ here without importing anything.
 
 from armasec_lite.jwt import decode, get_unverified_header
 from armasec_lite.openid_config_loader import OpenidConfigLoader
+from armasec_lite.pytest_extension import build_mock_openid_server
 from armasec_lite.schemas import JWK, DomainConfig
 
 
@@ -66,6 +67,25 @@ def test_mock_openid_server_serves_the_jwks(mock_openid_server, rs256_domain, rs
     loader = OpenidConfigLoader(rs256_domain)
     assert [k.kid for k in loader.jwks.keys] == [rs256_kid]
     assert mock_openid_server.jwks_route.call_count == 1
+
+
+def test_mock_openid_server_routes_a_bare_host_jwks_uri(rs256_domain, rs256_iss, rs256_jwk):
+    """
+    A consumer may configure a bare-host `jwks_uri`. The loader fetches it after
+    AnyHttpUrl parsing, which appends a "/", so a mock routing on the raw string would
+    answer "Unmocked request" to a fixture that is entirely correct.
+    """
+    bare_uri = f"https://{rs256_domain}"
+    builder = build_mock_openid_server(
+        rs256_domain,
+        {"issuer": rs256_iss, "jwks_uri": bare_uri},
+        rs256_jwk,
+        bare_uri,
+    )
+    with builder() as routes:
+        loader = OpenidConfigLoader(rs256_domain)
+        assert [k.kid for k in loader.jwks.keys] == [rs256_jwk["kid"]]
+        assert routes.jwks_route.call_count == 1
 
 
 def test_mock_openid_server_clears_the_loader_cache(mock_openid_server, rs256_domain):

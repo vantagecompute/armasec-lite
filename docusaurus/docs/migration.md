@@ -119,8 +119,8 @@ installed alongside `armasec-lite` if you rely on it, or wait for a future
 
 ## Requires no action
 
-Two more differences round out the API diff. Neither breaks anything migrating, so neither
-needs a fix; they are listed for completeness.
+A few more differences round out the API diff. None of them breaks anything migrating, so
+none needs a fix; they are listed for completeness.
 
 ### `TokenDecoder` gained an optional `jwks_refresher` argument
 
@@ -153,6 +153,33 @@ validated per key type at use time in `jwt.py` instead.
 document containing an EC or OKP key, which upstream's stricter schema rejects before the
 key is ever used, now parses correctly under `armasec-lite`.
 
+### `DomainConfig` validates `domain` and `algorithm` at construction
+
+Upstream's `DomainConfig` defaults `domain` to the empty string and accepts any string as
+`algorithm`. An empty domain builds the discovery URL
+`https:///.well-known/openid-configuration`, and a mistyped algorithm configures a route
+that refuses every token it is ever shown. Both failures arrive at request time, wearing a
+message that names neither the domain nor the configuration.
+
+`armasec-lite` requires `domain` and rejects one that is empty or whitespace, and checks
+`algorithm` against the thirteen algorithms `jwt.py` supports.
+
+**Why it is safe:** neither shape ever worked. A `DomainConfig` with no domain could not
+load a provider, and a `DomainConfig` with an unsupported algorithm could not decode a
+token. `Armasec()` with no domain at all still raises the same 422 it always did.
+
+### `handle_errors` does not re-wrap an error that is already ours
+
+py-buzz's `handle_errors` wraps every exception raised in its block, including one of its
+own types. `armasec_lite.exceptions.handle_errors` re-raises an `ArmasecError` subclass
+untouched and wraps everything else, so a specific error raised deep in a call stack is not
+flattened by an enclosing handler.
+
+**Why it is safe:** the wrapping contract holds for every error that is not already ours,
+which is the case the handler exists for. The behavior it prevents is a real one: without
+it, the `PayloadMappingError` block in `TokenDecoder.decode` would turn a genuine
+authentication failure into a 500 instead of a 401.
+
 ## Summary
 
 The tables below are the complete list; nothing above adds to or contradicts them.
@@ -174,3 +201,5 @@ The tables below are the complete list; nothing above adds to or contradicts the
 | --- | --- |
 | `TokenDecoder` gained an optional `jwks_refresher` keyword argument | Purely additive; the first positional argument is still `JWKs`, so existing construction sites are unaffected |
 | `JWK` no longer requires `n` and `e` | Strictly more permissive; an EC or OKP key that upstream rejected now parses |
+| `DomainConfig` requires a non-empty `domain` and a supported `algorithm` | Neither shape ever worked; the failure just moved from request time to construction time. `Armasec()` with no domain still raises its own 422 |
+| `handle_errors` re-raises an `ArmasecError` subclass unchanged | Everything that is not already ours is still wrapped. Re-wrapping would let the `PayloadMappingError` block turn a genuine 401 into a 500 |

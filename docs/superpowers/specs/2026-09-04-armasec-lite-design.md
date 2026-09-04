@@ -539,6 +539,9 @@ entirely. The table below is what remains after it.
 | `TokenDecoder` gained an optional `jwks_refresher` keyword argument | Purely additive; the first positional argument is still `JWKs`, so existing construction sites are unaffected |
 | Models remain pydantic | `model_dump()`, `model_validate()`, `response_model=` and `pydantic.ValidationError` all keep working, as upstream (Decision 6) |
 | `JWK` no longer requires `n` and `e` | Strictly more permissive. Upstream fails to parse a JWKS document containing an EC or OKP key; this parses it |
+| `handle_errors` re-raises an `ArmasecError` subclass unchanged instead of re-wrapping it | Deliberate, and a deviation from py-buzz and from this spec's own prose above. Re-wrapping would let the `PayloadMappingError` block in `TokenDecoder.decode` swallow a genuine `AuthenticationError` and turn a 401 into a 500. The outermost handler still maps anything that is not an `ArmasecError` to the wrapper type, so the wrapping contract holds for every error that is not already ours |
+| `DomainConfig.domain` is required and must be non-empty, where upstream defaults it to `""` | An empty domain builds the discovery URL `https:///.well-known/openid-configuration` and fails at request time with an error that names neither the domain nor the configuration. The only caller that relied on the empty default, `Armasec.__init__`, checks for the keyword before constructing, so `Armasec()` still raises its own 422 |
+| `DomainConfig.algorithm` is checked against the supported set at construction | Strictly earlier failure. A typo previously configured a route that refused every token it was ever shown, with a message about the token |
 
 Upstream armasec **3.x** is the migration source. Migrating from 2.x is out of scope and
 untested; a 2.x consumer should upgrade to 3.x first and confirm their application works.

@@ -20,6 +20,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from pydantic import AnyHttpUrl
 
 from armasec_lite import http, jwt
 from armasec_lite.openid_config_loader import OpenidConfigLoader, clear_cache
@@ -292,9 +293,14 @@ def build_mock_openid_server(
         jwks_uri: str = jwks_uri,
     ) -> Iterator[MockOpenidRoutes]:
         config_url = OpenidConfigLoader.build_openid_config_url(domain)
+        # The loader fetches `str(config.jwks_uri)`, which is the value after AnyHttpUrl
+        # parsing, and that appends a "/" to a bare-host URL. Routing on the raw string
+        # would then miss, and a consumer whose fixture supplies "https://host" would see
+        # an unexplained "Unmocked request" for a perfectly correct fixture.
+        jwks_url = str(AnyHttpUrl(jwks_uri))
         config_route = _Route(config_url, openid_config)
-        jwks_route = _Route(jwks_uri, {"keys": [jwk]})
-        routes = {config_url: config_route, jwks_uri: jwks_route}
+        jwks_route = _Route(jwks_url, {"keys": [jwk]})
+        routes = {config_url: config_route, jwks_url: jwks_route}
 
         original = http.get_json
 

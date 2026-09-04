@@ -89,6 +89,15 @@ def test_decode_builds_a_token_payload(jwks, rsa_private, now):
     assert payload.original_token == token
 
 
+def test_decode_survives_a_token_carrying_an_original_token_claim(jwks, rsa_private, now):
+    """
+    A claim named `original_token` used to collide with the keyword argument and raise
+    TypeError, which surfaces as a 500 rather than a 401. The real token wins.
+    """
+    token = _sign(rsa_private, {"sub": "abc", "exp": now + 60, "original_token": "spoofed"})
+    assert TokenDecoder(jwks).decode(token).original_token == token
+
+
 def test_decode_applies_the_permission_extractor(jwks, rsa_private, now):
     decoder = TokenDecoder(jwks, permission_extractor=extract_keycloak_permissions)
     token = _sign(

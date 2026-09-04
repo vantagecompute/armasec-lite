@@ -7,6 +7,14 @@ history and no business being hand written.
 
 The verification order in `decode` is a security property, not an implementation detail.
 Read the comments there before changing anything.
+
+One option in `_DEFAULT_OPTIONS` deserves calling out. `verify_signature` is a switch that
+turns the signature check off, so `decode(..., options={"verify_signature": False})`, and
+therefore `TokenDecoder(decode_options_override={"verify_signature": False})`, accepts any
+token at all. Testing and debugging only, in the same sense as `debug_exceptions` on
+`TokenSecurity`: it is developer supplied rather than attacker reachable, and it is kept
+because python-jose exposes it and a migrating consumer may already pass it. Nothing in
+this library sets it.
 """
 
 from __future__ import annotations
@@ -321,7 +329,9 @@ def verify_signature(
 
 
 #: Options `decode` understands, with their defaults. Anything else is ignored, matching
-#: the permissive behavior callers expect from a jose-shaped API.
+#: the permissive behavior callers expect from a jose-shaped API. `verify_signature` is a
+#: testing and debugging switch only: setting it False accepts every token. See the module
+#: docstring.
 _DEFAULT_OPTIONS: dict[str, bool] = {
     "verify_signature": True,
     "verify_exp": True,

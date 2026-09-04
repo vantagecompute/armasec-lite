@@ -14,6 +14,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 
+from armasec_lite.exceptions import AuthenticationError
 from armasec_lite.jwt import (
     InvalidAlgorithmError,
     InvalidSignatureError,
@@ -23,7 +24,8 @@ from armasec_lite.jwt import (
     decode,
     encode,
 )
-from armasec_lite.schemas import JWK
+from armasec_lite.schemas import JWK, JWKs
+from armasec_lite.token_decoder import TokenDecoder
 
 ALGS = ["RS256"]
 
@@ -107,10 +109,46 @@ def test_attack_hmac_confusion_against_a_jwk_carrying_k_is_rejected(rsa_jwk, now
         decode(f"{head}.{body}.{b64url_encode(forged)}", hostile, ["RS256", "HS256"])
 
 
-def test_attack_algorithm_outside_the_allowlist_is_rejected(rsa_private, rsa_jwk, now):
-    token = encode({"sub": "admin", "exp": now + 600}, b"secret" * 8, "HS256")
+def test_attack_algorithm_outside_the_allowlist_is_rejected(key_material, now):
+    """
+    A genuinely valid RS384 token offered to a route that allows only RS256. The token is
+    signed by the very key the verifier holds, so the signature is not what refuses it:
+    the allowlist is. Proven by decoding the same token successfully with RS384 allowed.
+    """
+    material = key_material("RS384")
+    token = encode(
+        {"sub": "admin", "exp": now + 600},
+        material.sign_key,
+        "RS384",
+        headers={"kid": material.jwk.kid},
+    )
+    assert decode(token, material.jwk, ["RS384"])["sub"] == "admin"
+
     with pytest.raises(InvalidAlgorithmError, match="not permitted"):
-        decode(token, rsa_jwk, ALGS)
+        decode(token, material.jwk, ALGS)
+
+
+def test_attack_kid_mismatch_is_rejected(attacker_rsa_private, rsa_jwk, now):
+    """
+    `kid` is read from the unverified header, so the attacker chooses it. It may select a
+    key and nothing else. Two shapes: a kid that is in no key set at all, and a kid
+    naming a legitimate key over a token that key did not sign.
+    """
+    decoder = TokenDecoder(JWKs(keys=(rsa_jwk,)))
+
+    def _forge(kid: str) -> str:
+        head = b64url_encode(json.dumps({"alg": "RS256", "kid": kid}).encode())
+        body = b64url_encode(json.dumps({"sub": "admin", "exp": now + 600}).encode())
+        sig = attacker_rsa_private.sign(
+            f"{head}.{body}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256()
+        )
+        return f"{head}.{body}.{b64url_encode(sig)}"
+
+    with pytest.raises(AuthenticationError, match="matching jwk"):
+        decoder.decode(_forge("no-such-kid"))
+
+    with pytest.raises(InvalidSignatureError):
+        decoder.decode(_forge(rsa_jwk.kid))
 
 
 def test_attack_tampered_payload_is_rejected(valid_token, rsa_jwk, now):
@@ -160,8 +198,13 @@ def test_attack_standard_base64_alphabet_is_rejected(rsa_jwk):
 
 
 def test_attack_non_canonical_padding_is_rejected(rsa_jwk):
-    with pytest.raises(InvalidTokenError, match="character"):
-        decode("YQ==.YQ==.YQ==", rsa_jwk, ALGS)
+    """
+    A segment of length 4n + 1 needs three padding characters, which no canonical base64
+    encoding ever produces. Every character is in the base64url alphabet, so this reaches
+    the length rule rather than the alphabet rule above it.
+    """
+    with pytest.raises(InvalidTokenError, match="length"):
+        decode("QUJDR.QUJDR.QUJDR", rsa_jwk, ALGS)
 
 
 def test_attack_ecdsa_der_signature_is_rejected(ec_private, ec_jwk, now):

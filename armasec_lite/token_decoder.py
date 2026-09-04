@@ -37,7 +37,10 @@ class TokenDecoder:
             algorithm:               The only algorithm accepted. Defaults to RS256.
             debug_logger:            A callable such as `logger.debug`.
             decode_options_override: Options overriding the default decode behavior, for
-                                     example `{"verify_exp": False}`.
+                                     example `{"verify_exp": False}`. One of them,
+                                     `verify_signature`, turns off authentication
+                                     entirely; it is a testing and debugging switch only.
+                                     See the `armasec_lite.jwt` module docstring.
             permission_extractor:    Optional function that extracts permissions from the
                                      decoded token when they are not a top level claim.
 
@@ -166,7 +169,11 @@ class TokenDecoder:
                 )
 
             self.debug_logger("Attempting to convert to TokenPayload")
-            token_payload = TokenPayload(**payload_dict, original_token=token)
+            # Validated from one mapping rather than passed as keyword arguments. A token
+            # that happens to carry an `original_token` claim would otherwise collide with
+            # the keyword and raise TypeError, which surfaces as a 500 rather than a 401.
+            # Here the real token simply wins.
+            token_payload = TokenPayload.model_validate({**payload_dict, "original_token": token})
             self.debug_logger(f"Built token_payload as {token_payload}")
             return token_payload
 

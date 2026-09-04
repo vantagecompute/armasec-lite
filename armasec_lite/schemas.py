@@ -17,6 +17,28 @@ from urllib.parse import urlparse
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, ValidationInfo, field_validator
 
+#: The algorithms a `DomainConfig` will accept, duplicated from `armasec_lite.jwt` rather
+#: than imported from it. `jwt` imports `JWK` from this module, so importing back the
+#: other way is a circular import. `test_schemas.py` asserts the two sets are equal, so
+#: they cannot drift apart silently.
+SUPPORTED_ALGORITHMS: frozenset[str] = frozenset(
+    {
+        "RS256",
+        "RS384",
+        "RS512",
+        "PS256",
+        "PS384",
+        "PS512",
+        "ES256",
+        "ES384",
+        "ES512",
+        "HS256",
+        "HS384",
+        "HS512",
+        "EdDSA",
+    }
+)
+
 
 class PermissionMode(str, Enum):
     """
@@ -145,6 +167,11 @@ class DomainConfig(BaseModel):
     """
     Configuration for one OIDC domain to authenticate tokens against.
 
+    `domain` is required and must be non-empty. Upstream defaults it to the empty string,
+    which builds the discovery URL `https:///.well-known/openid-configuration` and fails
+    at request time with an error that says nothing about the real mistake. Rejecting it
+    at construction is worth the small departure from upstream's signature.
+
     Attributes:
         domain:               The OIDC domain from which resources are loaded.
         audience:             Optional designation of the token audience.
@@ -161,7 +188,7 @@ class DomainConfig(BaseModel):
                               decoded token when they are not a top level claim.
     """
 
-    domain: str = ""
+    domain: str
     audience: str | None = None
     ignore_audience: bool = False
     algorithm: str = "RS256"
@@ -169,3 +196,32 @@ class DomainConfig(BaseModel):
     verify_issuer: bool = True
     match_keys: dict[str, Any] = {}
     permission_extractor: Callable[[dict[str, Any]], list[str]] | None = None
+
+    @field_validator("domain")
+    @classmethod
+    def _validate_domain(cls, value: str) -> str:
+        """
+        Reject an empty or whitespace-only domain.
+
+        Without this the discovery URL becomes `https:///.well-known/openid-configuration`
+        and the failure surfaces much later, as an opaque connection error.
+        """
+        if not value.strip():
+            raise ValueError("domain must not be empty")
+        return value
+
+    @field_validator("algorithm")
+    @classmethod
+    def _validate_algorithm(cls, value: str) -> str:
+        """
+        Reject an algorithm the jwt layer does not support.
+
+        Otherwise a typo configures a route that refuses every token it is ever shown,
+        with a message about the token rather than about the configuration.
+        """
+        if value not in SUPPORTED_ALGORITHMS:
+            raise ValueError(
+                f"algorithm {value!r} is not supported; expected one of "
+                f"{sorted(SUPPORTED_ALGORITHMS)}"
+            )
+        return value

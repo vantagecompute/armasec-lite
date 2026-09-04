@@ -106,6 +106,23 @@ def test_get_json_refuses_an_https_to_http_downgrade():
         )
 
 
+def test_get_json_refuses_a_redirect_off_http_and_https():
+    """
+    From an http origin, which a `use_https=False` domain has, the stdlib handler would
+    still follow a redirect onto ftp. The destination scheme is pinned unconditionally.
+    """
+    from armasec_lite.http import _NoDowngradeRedirectHandler
+
+    handler = _NoDowngradeRedirectHandler()
+
+    class _FakeRequest:
+        def get_full_url(self):
+            return "http://plain.example.com/a"
+
+    with pytest.raises(AuthenticationError, match="unsupported scheme"):
+        handler.redirect_request(_FakeRequest(), None, 302, "Found", {}, "ftp://elsewhere/b")
+
+
 def test_get_json_raises_on_an_unreachable_host():
     with pytest.raises(AuthenticationError):
         get_json("http://127.0.0.1:1/nothing", timeout=1.0)

@@ -7,7 +7,14 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from armasec_lite.schemas import JWK, DomainConfig, JWKs, OpenidConfig, PermissionMode
+from armasec_lite.schemas import (
+    JWK,
+    SUPPORTED_ALGORITHMS,
+    DomainConfig,
+    JWKs,
+    OpenidConfig,
+    PermissionMode,
+)
 
 
 def test_permission_mode_values_match_upstream():
@@ -135,6 +142,42 @@ def test_domain_config_defaults_match_the_spec():
 def test_domain_config_rejects_a_non_string_domain():
     with pytest.raises(ValidationError, match="domain"):
         DomainConfig(domain=None)  # type: ignore[arg-type]
+
+
+def test_domain_config_rejects_an_empty_domain():
+    """
+    An empty domain builds the URL `https:///.well-known/openid-configuration` and fails
+    much later with an error that says nothing about the real mistake.
+    """
+    with pytest.raises(ValidationError, match="domain must not be empty"):
+        DomainConfig(domain="")
+    with pytest.raises(ValidationError, match="domain must not be empty"):
+        DomainConfig(domain="   ")
+
+
+def test_domain_config_requires_a_domain():
+    with pytest.raises(ValidationError, match="domain"):
+        DomainConfig()  # type: ignore[call-arg]
+
+
+def test_domain_config_rejects_an_unsupported_algorithm():
+    with pytest.raises(ValidationError, match="not supported"):
+        DomainConfig(domain="auth.example.com", algorithm="RS255")
+
+
+def test_domain_config_accepts_every_supported_algorithm():
+    for algorithm in SUPPORTED_ALGORITHMS:
+        assert DomainConfig(domain="auth.example.com", algorithm=algorithm).algorithm == algorithm
+
+
+def test_the_schemas_algorithm_set_matches_the_jwt_one():
+    """
+    `schemas` cannot import `jwt`, since `jwt` imports `JWK` from `schemas`. The set is
+    therefore duplicated, and this is what stops the copies drifting apart.
+    """
+    from armasec_lite.jwt import SUPPORTED_ALGORITHMS as JWT_ALGORITHMS
+
+    assert SUPPORTED_ALGORITHMS == JWT_ALGORITHMS
 
 
 def test_domain_config_permission_extractor_accepts_a_callable():
