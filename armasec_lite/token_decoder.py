@@ -166,7 +166,11 @@ class TokenDecoder:
                 )
 
             self.debug_logger("Attempting to convert to TokenPayload")
-            token_payload = TokenPayload(**payload_dict, original_token=token)
+            # Validated from one mapping rather than passed as keyword arguments. A token
+            # that happens to carry an `original_token` claim would otherwise collide with
+            # the keyword and raise TypeError, which surfaces as a 500 rather than a 401.
+            # Here the real token simply wins.
+            token_payload = TokenPayload.model_validate({**payload_dict, "original_token": token})
             self.debug_logger(f"Built token_payload as {token_payload}")
             return token_payload
 

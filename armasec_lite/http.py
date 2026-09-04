@@ -30,12 +30,17 @@ MAX_REDIRECTS = 5
 
 class _NoDowngradeRedirectHandler(urllib.request.HTTPRedirectHandler):
     """
-    A redirect handler that refuses to move from https to http.
+    A redirect handler that refuses to move from https to http, or off http and https
+    altogether.
 
     urllib follows redirects across schemes by default. A provider that is compromised, or
     merely misconfigured, could redirect a JWKS fetch onto plaintext, where the response
     can be rewritten in transit by anyone on the path. The keys that come back decide who
     is authenticated, so this is not a theoretical concern.
+
+    The destination scheme is pinned unconditionally rather than only for an https origin.
+    A `use_https=False` domain starts on http, and from there the stdlib handler would
+    still follow a redirect onto ftp or any other scheme it knows.
     """
 
     max_redirections = MAX_REDIRECTS
@@ -49,9 +54,13 @@ class _NoDowngradeRedirectHandler(urllib.request.HTTPRedirectHandler):
         headers: Any,
         newurl: str,
     ) -> Any:
-        """Refuse a scheme downgrade, then defer to the standard behavior."""
+        """Refuse a scheme downgrade or change, then defer to the standard behavior."""
         old_scheme = urlparse(req.get_full_url()).scheme
         new_scheme = urlparse(newurl).scheme
+        if new_scheme not in ("http", "https"):
+            raise AuthenticationError(
+                f"Refusing redirect to unsupported scheme {new_scheme!r}: {newurl!r}"
+            )
         if old_scheme == "https" and new_scheme != "https":
             raise AuthenticationError(
                 f"Refusing redirect that would downgrade https to {new_scheme!r}: {newurl!r}"

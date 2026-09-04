@@ -40,9 +40,11 @@ class Armasec:
             kwargs:           Arguments for a single DomainConfig, such as `domain` and
                               `audience`.
         """
-        primary_domain_config = DomainConfig(**kwargs)
-        if primary_domain_config.domain:
-            self.domain_configs = [primary_domain_config]
+        # Tested before constructing, not after. `DomainConfig` now rejects an empty
+        # domain outright, so building one from kwargs that carry no domain would raise a
+        # ValidationError where this factory owes the caller its own 422.
+        if kwargs.get("domain"):
+            self.domain_configs = [DomainConfig(**kwargs)]
         elif domain_configs is not None:
             self.domain_configs = domain_configs
         else:
