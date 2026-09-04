@@ -7,7 +7,7 @@ import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 
-from armasec_lite.exceptions import AuthenticationError, PayloadMappingError
+from armasec_lite.exceptions import AuthenticationError, PayloadMappingError, UnknownKeyIdError
 from armasec_lite.jwt import b64url_encode
 from armasec_lite.schemas import JWK, JWKs
 from armasec_lite.token_decoder import TokenDecoder, extract_keycloak_permissions
@@ -45,14 +45,37 @@ def test_get_decode_key_raises_without_a_kid(jwks, rsa_private, now):
 
 
 def test_get_decode_key_raises_on_an_unknown_kid(jwks, rsa_private, now):
+    """Without a refresher there is nothing a caller could do, so this is a plain refusal."""
     decoder = TokenDecoder(jwks)
     token = _sign(rsa_private, {"sub": "abc", "exp": now + 60}, kid="unknown")
-    with pytest.raises(AuthenticationError, match="matching jwk"):
+    with pytest.raises(AuthenticationError, match="matching jwk") as info:
         decoder.get_decode_key(token)
+    assert not isinstance(info.value, UnknownKeyIdError)
 
 
-def test_get_decode_key_retries_through_the_refresher(rsa_private, rsa_jwk, now):
-    """A rotated kid recovers when a refresher is wired in."""
+def test_get_decode_key_reports_an_unknown_kid_without_refreshing(rsa_private, rsa_jwk, now):
+    """
+    The decoder must never perform the refetch itself.
+
+    `get_decode_key` is called from `TokenSecurity.__call__` on the event loop thread, and
+    a blocking HTTP fetch there stalls every other request in the process. Reporting the
+    miss lets the caller drive the refresh from a worker thread instead.
+    """
+    calls = []
+
+    def _refresh():
+        calls.append(1)
+        return JWKs(keys=(rsa_jwk,))
+
+    decoder = TokenDecoder(JWKs(keys=(rsa_jwk,)), jwks_refresher=_refresh)
+    token = _sign(rsa_private, {"sub": "abc", "exp": now + 60}, kid="never-there")
+    with pytest.raises(UnknownKeyIdError, match="matching jwk"):
+        decoder.get_decode_key(token)
+    assert calls == []
+
+
+def test_refresh_keys_recovers_a_rotated_kid(rsa_private, rsa_jwk, now):
+    """A rotated kid recovers once the caller has run the refresher."""
     rotated = JWK.model_validate({"kty": "RSA", "kid": "rotated", "n": rsa_jwk.n, "e": rsa_jwk.e})
     calls = []
 
@@ -62,22 +85,18 @@ def test_get_decode_key_retries_through_the_refresher(rsa_private, rsa_jwk, now)
 
     decoder = TokenDecoder(JWKs(keys=(rsa_jwk,)), jwks_refresher=_refresh)
     token = _sign(rsa_private, {"sub": "abc", "exp": now + 60}, kid="rotated")
+    with pytest.raises(UnknownKeyIdError):
+        decoder.get_decode_key(token)
+
+    decoder.refresh_keys()
     assert decoder.get_decode_key(token).kid == "rotated"
     assert len(calls) == 1
 
 
-def test_get_decode_key_refresher_is_tried_only_once(rsa_private, rsa_jwk, now):
-    calls = []
-
-    def _refresh():
-        calls.append(1)
-        return JWKs(keys=(rsa_jwk,))
-
-    decoder = TokenDecoder(JWKs(keys=(rsa_jwk,)), jwks_refresher=_refresh)
-    token = _sign(rsa_private, {"sub": "abc", "exp": now + 60}, kid="never-there")
-    with pytest.raises(AuthenticationError, match="matching jwk"):
-        decoder.get_decode_key(token)
-    assert len(calls) == 1
+def test_refresh_keys_does_nothing_without_a_refresher(jwks, rsa_jwk):
+    decoder = TokenDecoder(jwks)
+    decoder.refresh_keys()
+    assert list(decoder.jwks.keys) == [rsa_jwk]
 
 
 def test_decode_builds_a_token_payload(jwks, rsa_private, now):

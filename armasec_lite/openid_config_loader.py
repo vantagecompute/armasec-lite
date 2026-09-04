@@ -27,17 +27,23 @@ so the pytest extension calls it on entry to and exit from its mock provider.
 
 Upstream has none, so N concurrent first requests all fetch simultaneously. The lock is a
 `threading.Lock` and deliberately not an `asyncio.Lock`: an `asyncio.Lock` binds to the
-loop that first awaits it and goes stale across test loops, and the cold load already runs
-in an executor thread, so the worker holds this lock and the event loop thread is never
-blocked on it. Both properties check inside the lock as well as outside it, so a thread
-that waited does not repeat a fetch another thread already finished.
+loop that first awaits it and goes stale across test loops. Every path that takes this
+lock, the cold load and the refresh alike, is driven from an executor thread by
+`TokenSecurity`, so a worker holds it and the event loop thread is never blocked on it.
+Both properties check inside the lock as well as outside it, so a thread that waited does
+not repeat a fetch another thread already finished.
+
+The lock is not reentrant, and `config` takes it. `jwks` and `refresh_jwks` therefore read
+`self.config` before entering the lock rather than inside it. Moving either read in would
+self-deadlock on the first request, so the ordering is load bearing and not stylistic.
 
 ### The JWKS is refetchable, within a rate limit
 
 Upstream caches it for the process lifetime, so a provider key rotation returns 401 on
 every request until someone restarts the service. `refresh_jwks` is wired into
-`TokenDecoder` and consulted when a token presents a `kid` absent from the cached set,
-which is exactly what a rotation looks like from here.
+`TokenDecoder.refresh_keys` and reached when a token presents a `kid` absent from the
+cached set, which is exactly what a rotation looks like from here. `TokenSecurity` runs it
+in an executor thread rather than on the event loop.
 
 `JWKS_REFRESH_INTERVAL` is the minimum number of seconds between refetches for one domain.
 It bounds refresh-to-refresh spacing, not the initial load; zero is the "never refreshed"
@@ -139,9 +145,12 @@ class OpenidConfigLoader:
         # request flood.
         self._last_refresh_at = 0.0
         # A threading.Lock rather than an asyncio.Lock on purpose: an asyncio.Lock binds
-        # to the loop that first awaits it and goes stale across test loops. The cold load
-        # already runs in an executor thread, so the worker holds this and the event loop
-        # thread is never blocked on it.
+        # to the loop that first awaits it and goes stale across test loops. Both the cold
+        # load and the refresh run in an executor thread, so a worker holds this and the
+        # event loop thread is never blocked on it.
+        #
+        # It is NOT reentrant, and `config` takes it. `jwks` and `refresh_jwks` must
+        # therefore read `self.config` before entering the lock, never inside it.
         self._lock = threading.Lock()
 
     @classmethod
@@ -275,6 +284,8 @@ class OpenidConfigLoader:
                 be fetched, or the response did not validate as a `JWKs`. Maps to 401.
         """
         if self._jwks is None:
+            # Read before taking the lock, never inside it: `config` takes the same
+            # non-reentrant lock, so moving this line down self-deadlocks.
             config = self.config
             with self._lock:
                 if self._jwks is None:
@@ -290,10 +301,12 @@ class OpenidConfigLoader:
         """
         Refetch the JWKS, at most once per `JWKS_REFRESH_INTERVAL`.
 
-        Called by `TokenDecoder` when a token presents a key id absent from the cached set,
-        which is what a provider key rotation looks like from here. A rate limited call
-        returns the current JWKS unchanged rather than raising, so the caller simply fails
-        to find the key and the request is refused as an ordinary 401.
+        Wired into `TokenDecoder.refresh_keys` and reached when a token presents a key id
+        absent from the cached set, which is what a provider key rotation looks like from
+        here. `TokenSecurity` drives it from an executor thread, because it is blocking
+        network work and `kid` is attacker chosen. A rate limited call returns the current
+        JWKS unchanged rather than raising, so the caller simply fails to find the key and
+        the request is refused as an ordinary 401.
 
         The rate limit is a security control, not a politeness measure. `kid` is read from
         the token's unverified header, so an unauthenticated caller picks it. The clock is
@@ -310,6 +323,8 @@ class OpenidConfigLoader:
                 failed. The clock is still stamped, so the next unknown `kid` within
                 `JWKS_REFRESH_INTERVAL` will not retry. Maps to 401.
         """
+        # Read before taking the lock, never inside it: `config` takes the same
+        # non-reentrant lock, so moving this line down self-deadlocks the first request.
         config = self.config
         with self._lock:
             elapsed = time.monotonic() - self._last_refresh_at

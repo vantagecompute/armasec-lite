@@ -355,9 +355,11 @@ With it, two.
 config and JWKS fetches. Upstream has no lock, so N concurrent first requests to the same
 route all fetch simultaneously. This is a `threading.Lock` rather than an `asyncio.Lock`
 deliberately: an `asyncio.Lock` binds to the loop that first awaits it and goes stale
-across test loops and multi-loop setups. Since the cold path already runs in an executor
-thread (see `token_security.py`), the worker thread holds the lock and the event loop
-thread is never blocked on it.
+across test loops and multi-loop setups. Since every path that takes the lock, the cold
+load and the JWKS refresh alike, runs in an executor thread (see `token_security.py`), the
+worker thread holds the lock and the event loop thread is never blocked on it. The lock is
+not reentrant and the `config` property takes it, so `jwks` and `refresh_jwks` read
+`config` before entering the lock; moving either read inside would self-deadlock.
 
 **Rate-limited JWKS refetch.** `refresh_jwks()` refetches the JWKS when a token presents
 an unknown `kid`, but at most once per `JWKS_REFRESH_INTERVAL` seconds (default 300),
@@ -398,8 +400,8 @@ the decoder alongside `audience`.
 ### `token_security.py`
 
 Behavior matches upstream, with the async fix. `__call__` checks the warm cache first and
-takes a fully synchronous path with zero executor overhead when managers are already
-loaded. Only the cold path does:
+takes a fully synchronous path with zero executor overhead when the managers are already
+loaded and the token's `kid` is one of the cached keys. The cold path does:
 
 ```python
 loop = asyncio.get_running_loop()
@@ -408,6 +410,17 @@ await loop.run_in_executor(None, self._load_all_managers)
 
 Upstream calls sync `httpx.get` from inside `async def __call__`, blocking the event loop
 on every cold load. This fixes that.
+
+The one other blocking path gets the same treatment. `TokenDecoder.get_decode_key` reports
+an unknown `kid` by raising `UnknownKeyIdError` instead of refetching the JWKS itself, and
+`__call__` catches it and drives `_refresh_and_retry` through the executor, once per
+request. `kid` comes from the token's unverified header, so an inline refetch would be an
+attacker-triggered whole-process stall for the length of the fetch timeout.
+
+`_load_all_managers` builds its list locally and assigns it in one statement. Concurrent
+first requests all pass the empty-cache check in `__call__`, so appending in place would
+leave N copies of every manager and would expose a half-built list to a concurrent
+request.
 
 `ManagerConfig` becomes a plain dataclass. The rest of the class body, including
 `match_keys` handling, `PermissionMode` evaluation, and the `HTTPException` translation

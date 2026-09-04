@@ -17,15 +17,22 @@ work at all.
 
 ### The executor hop
 
-That first load is synchronous network work, and it runs in an executor rather than on
+Every piece of synchronous network work in a request runs in an executor rather than on
 the event loop. Upstream armasec calls synchronous `httpx.get` directly inside this
 coroutine, which stalls every other request in the process for the duration, including
 requests to routes that need no authentication whatsoever.
 
-The hop happens only on that cold path. Once the managers are cached, the warm path is
-pure in-memory work: unpack a header, verify a signature, compare some sets. Hopping to a
-thread for that would add a scheduling round trip to every authenticated request and buy
-nothing.
+There are exactly two such pieces, and both are exceptional. The first is the cold load.
+The second is the JWKS refetch that recovers a provider key rotation: `TokenDecoder`
+reports an unknown `kid` by raising `UnknownKeyIdError` rather than refetching, and
+`__call__` answers by refreshing and retrying once from a worker thread. That path matters
+more than it looks, because `kid` is read from the token's unverified header, so an inline
+refetch would be a whole-process stall any unauthenticated caller could trigger at will.
+
+Neither hop is on the steady state. Once the managers are cached and a token's `kid` is
+known, the warm path is pure in-memory work: unpack a header, verify a signature, compare
+some sets. Hopping to a thread for that would add a scheduling round trip to every
+authenticated request and buy nothing.
 
 ### What failure looks like
 
@@ -52,7 +59,7 @@ from fastapi.openapi.models import APIKey, APIKeyIn
 from fastapi.security.api_key import APIKeyBase
 from starlette.requests import Request
 
-from armasec_lite.exceptions import AuthenticationError, AuthorizationError
+from armasec_lite.exceptions import AuthenticationError, AuthorizationError, UnknownKeyIdError
 from armasec_lite.openid_config_loader import OpenidConfigLoader
 from armasec_lite.pluggable import plugin_manager
 from armasec_lite.schemas import DomainConfig, PermissionMode
@@ -201,7 +208,10 @@ class TokenSecurity(APIKeyBase):
            header and returns the first payload that decodes, then checks that domain's
            `match_keys`. Failure is 401 by default, but the real error's own status wins,
            so a `PayloadMappingError` from a bad `permission_extractor` surfaces as 500,
-           which is correct: that is a server misconfiguration, not a bad request.
+           which is correct: that is a server misconfiguration, not a bad request. An
+           `UnknownKeyIdError` is the one failure answered rather than reported: it means
+           a key rotation, so the JWKS is refetched in an executor and the decode is
+           retried exactly once.
         3. **Scopes**, only when `self.scopes` is non-empty. Failure is 403.
         4. **Plugins**, unless `skip_plugins`. Every registered `armasec_plugin_check`
            implementation runs, and any exception denies the request. Failure defaults to
@@ -213,10 +223,15 @@ class TokenSecurity(APIKeyBase):
         request in the process including ones that need no authentication at all, which is
         what upstream armasec does by calling `httpx.get` directly inside this coroutine.
 
-        The executor hop happens only on that cold path. The warm path below is pure
-        in-memory work: read a header, verify a signature, compare some sets. Hopping to a
-        thread for that would add a scheduling round trip to every authenticated request
-        and buy nothing.
+        The key rotation retry runs in an executor for the same reason, and the reason is
+        sharper there: `kid` comes from the token's unverified header, so an inline refetch
+        would hand any unauthenticated caller a whole-process stall for the length of the
+        fetch timeout, on demand.
+
+        Neither hop touches the steady state. With the managers cached and the token's
+        `kid` known, the path below is pure in-memory work: read a header, verify a
+        signature, compare some sets. Hopping to a thread for that would add a scheduling
+        round trip to every authenticated request and buy nothing.
 
         The cold load is not itself the concurrency control. `OpenidConfigLoader` holds a
         `threading.Lock` and is shared process-wide, so N simultaneous first requests
@@ -255,6 +270,17 @@ class TokenSecurity(APIKeyBase):
 
         try:
             token_payload = self._extract_token_payload_from_manager(request)
+        except UnknownKeyIdError:
+            # A key rotation. Refetching is blocking network work, so it goes to a worker
+            # thread; doing it inline would stall the loop for the fetch timeout, and
+            # `kid` is attacker chosen, so that stall would be available on demand.
+            loop = asyncio.get_running_loop()
+            try:
+                token_payload = await loop.run_in_executor(None, self._refresh_and_retry, request)
+            except Exception as err:
+                if self.debug_exceptions:
+                    raise
+                raise self._http_exception(err, status.HTTP_401_UNAUTHORIZED) from err
         except Exception as err:
             if self.debug_exceptions:
                 raise
@@ -331,6 +357,39 @@ class TokenSecurity(APIKeyBase):
         else:
             raise AuthorizationError(f"Unknown permission_mode: {self.permission_mode}")
 
+    def _refresh_and_retry(self, request: Request) -> TokenPayload:
+        """
+        Refetch every domain's key set, then retry the extraction once.
+
+        Blocking network work, so `__call__` runs it in an executor rather than inline.
+        Reached only when no manager could decode the token and at least one reported its
+        `kid` as unknown, which is what a provider key rotation looks like from here.
+
+        Every manager is refreshed rather than only the ones that reported a miss. They all
+        failed, so none of their key sets is known good, and each loader's own rate limit
+        bounds the outbound traffic at one refetch per domain per `JWKS_REFRESH_INTERVAL`
+        no matter how often this is called.
+
+        The retry is not itself retried. A second `UnknownKeyIdError` propagates to the
+        caller as an ordinary 401, so an unknown `kid` can never drive a loop.
+
+        Args:
+            request: The request whose headers carry the token.
+
+        Returns:
+            The payload from the first manager that decoded the token against its
+            refreshed key set.
+
+        Raises:
+            AuthenticationError: A refetch failed, or the token still does not decode
+                against any refreshed key set. Maps to 401.
+            AuthorizationError: A manager decoded the token but its domain's `match_keys`
+                were not satisfied. Maps to 403.
+        """
+        for manager_config in self.managers:
+            manager_config.manager.token_decoder.refresh_keys()
+        return self._extract_token_payload_from_manager(request)
+
     def _load_all_managers(self) -> None:
         """
         Build a TokenManager for each configured domain, skipping ones that fail.
@@ -339,6 +398,13 @@ class TokenSecurity(APIKeyBase):
         cached. A domain that fails to load is skipped rather than fatal, so one
         unreachable or misconfigured provider does not take down authentication against
         every other configured domain. Only "all of them failed" is an error.
+
+        The list is built locally and assigned in one statement rather than appended to in
+        place, and that is load bearing. `__call__` checks `self.managers` for emptiness
+        before hopping to the executor, so N concurrent first requests all pass that check
+        and all run this method. Appending would leave N copies of every manager behind,
+        and would also expose a partially built list to a concurrent request, which would
+        then 401 a token that is valid for a domain still being appended.
 
         The skipped domain is not retried until the whole instance is reloaded, so a
         provider that was down at first-request time stays out of rotation for the life of
@@ -352,26 +418,31 @@ class TokenSecurity(APIKeyBase):
         if self.managers:
             return
 
+        loaded: list[ManagerConfig] = []
         for domain_config in self.domain_configs:
             try:
-                self.managers.append(
+                loaded.append(
                     ManagerConfig(
                         manager=self._load_manager(domain_config),
                         domain_config=domain_config,
                     )
                 )
-            except AuthenticationError:
-                self.debug_logger(f"Failed to match JWK against domain {domain_config.domain}")
             # Deliberately broad: one unreachable or misconfigured provider must not take
             # down authentication against every other configured domain. The condition
             # below turns "all of them failed" into an error.
             except Exception as err:  # noqa: BLE001
-                self.debug_logger(f"Exception caught: {err.__class__.__name__}")
+                self.debug_logger(
+                    f"Failed to load a TokenManager for domain {domain_config.domain}:"
+                    f" {err.__class__.__name__}"
+                )
 
         AuthenticationError.require_condition(
-            len(self.managers) > 0,
+            len(loaded) > 0,
             "Not authenticated: couldn't load any TokenManager instance",
         )
+        # One assignment, so a concurrent request sees either the old empty list or the
+        # finished one, never a half-built one, and a second loader cannot double it up.
+        self.managers = loaded
 
     def _load_manager(self, domain_config: DomainConfig) -> TokenManager:
         """
@@ -458,6 +529,12 @@ class TokenSecurity(APIKeyBase):
         simply the only failure, so the client sees the actual reason its token was
         rejected.
 
+        An `UnknownKeyIdError` from any manager wins over the last error, because it is the
+        one failure the caller can do something about: it means a key rotation, and
+        `__call__` answers it with a refresh and a retry. This only decides which error is
+        raised when nothing decoded at all, so it never intercepts a `match_keys` refusal,
+        which leaves the loop directly.
+
         Args:
             request: The request whose headers carry the token.
 
@@ -466,6 +543,9 @@ class TokenSecurity(APIKeyBase):
             `match_keys` the payload satisfied.
 
         Raises:
+            UnknownKeyIdError: At least one manager found no key carrying the token's
+                `kid`, and no manager decoded it. `__call__` catches this and retries once
+                against a refreshed key set; uncaught it is an ordinary 401.
             AuthenticationError: No manager could decode the token, and none of them
                 raised anything more specific. Maps to 401.
             AuthorizationError: A manager decoded the token but its domain's `match_keys`
@@ -480,9 +560,14 @@ class TokenSecurity(APIKeyBase):
         self._load_all_managers()
 
         last_error: Exception | None = None
+        unknown_kid_error: UnknownKeyIdError | None = None
         for manager_config in self.managers:
             try:
                 token_payload = manager_config.manager.extract_token_payload(request.headers)
+            except UnknownKeyIdError as err:
+                self.debug_logger(f"Domain {manager_config.domain_config.domain} has no such kid")
+                unknown_kid_error = err
+                continue
             # Deliberately broad: a token that this manager cannot decode may still be
             # valid for the next configured domain. The error is kept, not discarded, so
             # that the last real failure is what the caller sees.
@@ -494,6 +579,8 @@ class TokenSecurity(APIKeyBase):
             self._check_match_keys(token_payload, manager_config.domain_config)
             return token_payload
 
+        if unknown_kid_error is not None:
+            raise unknown_kid_error
         if last_error is not None:
             raise last_error
         raise AuthenticationError(

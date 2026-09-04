@@ -10,6 +10,10 @@ hierarchy here is worth reading rather than skimming:
 - `AuthenticationError` is 401: the token is absent, malformed, expired, or does not
   verify. `armasec_lite.jwt` subclasses this eight more times to name the specific check
   that failed.
+- `UnknownKeyIdError` is 401 as well, and is the one error type here that exists to be
+  caught rather than returned. It says the token's `kid` is absent from the cached key
+  set, which is what a provider key rotation looks like, and `TokenSecurity` answers it by
+  refetching the JWKS from a worker thread and retrying once.
 - `AuthorizationError` is 403: the token verified, but it lacks a required permission or
   fails a domain's `match_keys`.
 - `PayloadMappingError` is 500: a configured `permission_extractor` did not match the
@@ -177,6 +181,26 @@ class AuthenticationError(ArmasecError):
 
     status_code: int = 401
     detail: str = "Not authenticated"
+
+
+class UnknownKeyIdError(AuthenticationError):
+    """
+    Indicates that no key in the cached JWKS carries the token's key id.
+
+    Raised by `TokenDecoder.get_decode_key`, and the only error in the library that is
+    raised in order to be caught. The decoder deliberately does not recover from it
+    itself: recovery means refetching the provider's JWKS, which is blocking network work,
+    and the decoder runs on the event loop thread. `TokenSecurity.__call__` catches this,
+    refetches from a worker thread, and retries the decode exactly once.
+
+    It inherits `AuthenticationError`'s 401, so a caller using `TokenDecoder` directly, or
+    a decoder with no refresher wired in, sees an ordinary authentication failure and
+    needs to know nothing about the retry.
+
+    Attributes:
+        status_code: The HTTP status code indicated by the error. Inherited, 401.
+        detail:      The client-facing detail message. Inherited, "Not authenticated".
+    """
 
 
 class AuthorizationError(ArmasecError):

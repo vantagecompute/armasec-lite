@@ -25,11 +25,16 @@ simultaneously. `armasec-lite`'s lock means only one of them performs the fetch;
 wait for it and reuse the result.
 
 **Why `threading.Lock` and not `asyncio.Lock`.** An `asyncio.Lock` binds to the event loop
-that first awaits it, and goes stale across test loops and multi-loop setups. Since the
-cold path already runs in an executor thread (see
-[Threading model](./threading-model.md)), the worker thread is what actually holds the
-lock, and the event loop thread is never blocked on it. A `threading.Lock` is therefore
-both the simpler primitive and the one that actually matches where the contention happens.
+that first awaits it, and goes stale across test loops and multi-loop setups. Since every
+path that takes the lock, the cold load and the JWKS refresh alike, runs in an executor
+thread (see [Threading model](./threading-model.md)), the worker thread is what actually
+holds the lock, and the event loop thread is never blocked on it. A `threading.Lock` is
+therefore both the simpler primitive and the one that actually matches where the contention
+happens.
+
+The lock is not reentrant, and the `config` property takes it. `jwks` and `refresh_jwks`
+therefore read `config` before entering the lock rather than inside it. Moving either read
+in would self-deadlock on the first request.
 
 ## Rate-limited JWKS refetch
 
