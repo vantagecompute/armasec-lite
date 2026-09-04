@@ -22,6 +22,11 @@ ISSUER = f"https://{DOMAIN}"
 CONFIG_URL = f"{ISSUER}/.well-known/openid-configuration"
 JWKS_URL = f"{ISSUER}/jwks"
 
+DOMAIN_B = "auth-b.example.com"
+ISSUER_B = f"https://{DOMAIN_B}"
+CONFIG_URL_B = f"{ISSUER_B}/.well-known/openid-configuration"
+JWKS_URL_B = f"{ISSUER_B}/jwks"
+
 
 class _Request:
     """The only parts of a starlette Request that TokenSecurity touches."""
@@ -354,6 +359,106 @@ async def test_a_rotated_kid_recovers_without_a_restart(fake_get, make_token):
     fake_get.routes[JWKS_URL]["keys"][0]["kid"] = "rotated"
     payload = await security(_Request({"Authorization": f"Bearer {make_token(kid='rotated')}"}))
     assert payload.sub == "abc"
+
+
+def _broken_extractor(decoded_token: dict) -> list[str]:
+    """
+    A permission_extractor aimed at a claim the provider does not issue.
+
+    Stands in for the real mistake: a Keycloak extractor configured against a domain whose
+    tokens are not shaped that way. `TokenDecoder.decode` turns the KeyError into a
+    `PayloadMappingError`, which is a 500 because the fault is in the DomainConfig.
+    """
+    return list(decoded_token["resource_access"]["no-such-client"]["roles"])
+
+
+@pytest.fixture
+def fake_get_two_domains(monkeypatch, rsa_jwk):
+    """
+    Serve two providers signing with the same key under different key ids.
+
+    Domain A publishes `rsa-test` and domain B publishes `rotated`, so one token can miss
+    the `kid` on A while decoding cleanly on B. Both are reachable and both are correctly
+    configured as far as the network is concerned; only B's `permission_extractor` is
+    wrong, which is what makes its failure a 500 rather than a 401.
+    """
+    calls = _Calls()
+
+    def _key(kid):
+        return {"kty": "RSA", "kid": kid, "alg": "RS256", "n": rsa_jwk.n, "e": rsa_jwk.e}
+
+    routes = {
+        CONFIG_URL: {"issuer": ISSUER, "jwks_uri": JWKS_URL},
+        JWKS_URL: {"keys": [_key("rsa-test")]},
+        CONFIG_URL_B: {"issuer": ISSUER_B, "jwks_uri": JWKS_URL_B},
+        JWKS_URL_B: {"keys": [_key("rotated")]},
+    }
+    calls.routes = routes
+
+    def _get(url, *, timeout=10.0):
+        calls.append(url)
+        return routes[url]
+
+    monkeypatch.setattr(loader_module.http, "get_json", _get)
+    return calls
+
+
+def _two_domain_security():
+    """Domain A first, then a domain B whose `permission_extractor` is misconfigured."""
+    return _security(
+        domain_configs=[
+            DomainConfig(domain=DOMAIN),
+            DomainConfig(
+                domain=DOMAIN_B,
+                verify_issuer=False,
+                permission_extractor=_broken_extractor,
+            ),
+        ]
+    )
+
+
+async def test_a_misconfigured_extractor_elsewhere_answers_500_not_401(
+    fake_get_two_domains, make_token
+):
+    """
+    Once the refresh has failed to help, the more specific failure is the useful answer.
+
+    Domain A has no key for this `kid` and domain B decodes the token but its
+    `permission_extractor` does not match it. Reporting that as a 401 sends whoever is
+    debugging it after tokens and identity providers when the fault is in their own
+    DomainConfig.
+    """
+    security = _two_domain_security()
+    with pytest.raises(HTTPException) as info:
+        await security(_Request({"Authorization": f"Bearer {make_token(kid='rotated')}"}))
+    assert info.value.status_code == 500
+
+
+async def test_a_rotation_recovers_even_when_another_domain_is_misconfigured(
+    fake_get_two_domains, make_token
+):
+    """
+    The regression test for the naive fix. A key rotation must still heal itself.
+
+    `UnknownKeyIdError` winning the first pass is what makes the refresh reachable at all.
+    Preferring the `PayloadMappingError` unconditionally would answer 500 here without ever
+    refetching, silently disabling key-rotation recovery for every deployment that happens
+    to have one misconfigured domain.
+    """
+    security = _two_domain_security()
+    await security(_Request({"Authorization": f"Bearer {make_token()}"}))
+
+    fake_get_two_domains.routes[JWKS_URL]["keys"][0]["kid"] = "rotated"
+    payload = await security(_Request({"Authorization": f"Bearer {make_token(kid='rotated')}"}))
+    assert payload.sub == "abc"
+
+
+async def test_a_single_domain_unknown_kid_still_answers_401(fake_get, make_token):
+    """With one domain there is no other error, so the unknown `kid` is the answer."""
+    security = _security()
+    with pytest.raises(HTTPException) as info:
+        await security(_Request({"Authorization": f"Bearer {make_token(kid='rotated')}"}))
+    assert info.value.status_code == 401
 
 
 async def test_concurrent_cold_calls_do_not_duplicate_managers(fake_get, make_token, monkeypatch):

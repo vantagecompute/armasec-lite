@@ -417,6 +417,18 @@ an unknown `kid` by raising `UnknownKeyIdError` instead of refetching the JWKS i
 request. `kid` comes from the token's unverified header, so an inline refetch would be an
 attacker-triggered whole-process stall for the length of the fetch timeout.
 
+`_extract_token_payload_from_manager` takes a keyword-only `allow_refresh` because the two
+passes it serves want opposite error precedence. With several domains configured, one call
+can end holding both an `UnknownKeyIdError` from a domain that lacks the `kid` and some
+other error from a domain that got further. On the first pass (`allow_refresh=True`, from
+`__call__`) the `UnknownKeyIdError` wins, because that pass exists only to decide whether a
+refresh is worth a thread hop and it is the one failure a refresh can repair; demoting it
+there would leave a genuine key rotation unrecovered whenever another domain is
+misconfigured. On the retry pass (`allow_refresh=False`, from `_refresh_and_retry`) the
+refresh has already been tried and failed, so `last_error` wins and a `PayloadMappingError`
+from a bad `permission_extractor` reaches the client as the 500 it is rather than as a 401.
+With one configured domain the flag changes nothing: there is only ever one error.
+
 `_load_all_managers` builds its list locally and assigns it in one statement. Concurrent
 first requests all pass the empty-cache check in `__call__`, so appending in place would
 leave N copies of every manager and would expose a half-built list to a concurrent

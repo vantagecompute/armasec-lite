@@ -211,7 +211,9 @@ class TokenSecurity(APIKeyBase):
            which is correct: that is a server misconfiguration, not a bad request. An
            `UnknownKeyIdError` is the one failure answered rather than reported: it means
            a key rotation, so the JWKS is refetched in an executor and the decode is
-           retried exactly once.
+           retried exactly once. It therefore outranks every other error on the first pass
+           and only on the first pass, because that pass exists to decide whether to
+           refresh. The retry reports the most specific failure instead.
         3. **Scopes**, only when `self.scopes` is non-empty. Failure is 403.
         4. **Plugins**, unless `skip_plugins`. Every registered `armasec_plugin_check`
            implementation runs, and any exception denies the request. Failure defaults to
@@ -373,6 +375,17 @@ class TokenSecurity(APIKeyBase):
         The retry is not itself retried. A second `UnknownKeyIdError` propagates to the
         caller as an ordinary 401, so an unknown `kid` can never drive a loop.
 
+        The retry runs with `allow_refresh=False`, which flips the error precedence inside
+        the extraction. On the first pass an `UnknownKeyIdError` outranks everything,
+        because it is the signal that got us here. By the time this method's retry runs
+        the refresh has already happened and failed to help, so that error has nothing
+        left to offer, and a more specific failure from another domain is the answer worth
+        returning. Without the flip a `PayloadMappingError` on domain B, a server
+        misconfiguration and a 500, would reach the client as a 401 whenever domain A also
+        missed the `kid`. Flipping it on the first pass instead would be far worse: the
+        refresh would never be attempted at all in that configuration, so a real key
+        rotation would stay broken.
+
         Args:
             request: The request whose headers carry the token.
 
@@ -385,10 +398,14 @@ class TokenSecurity(APIKeyBase):
                 against any refreshed key set. Maps to 401.
             AuthorizationError: A manager decoded the token but its domain's `match_keys`
                 were not satisfied. Maps to 403.
+            Exception: The most specific failure any manager raised, re-raised unchanged.
+                A `PayloadMappingError` (500) from a misconfigured `permission_extractor`
+                now wins over another domain's unknown `kid`, since the refresh has
+                already been tried.
         """
         for manager_config in self.managers:
             manager_config.manager.token_decoder.refresh_keys()
-        return self._extract_token_payload_from_manager(request)
+        return self._extract_token_payload_from_manager(request, allow_refresh=False)
 
     def _load_all_managers(self) -> None:
         """
@@ -517,7 +534,9 @@ class TokenSecurity(APIKeyBase):
                     bool(set(actual or ()) & set(value_to_match)), message
                 )
 
-    def _extract_token_payload_from_manager(self, request: Request) -> TokenPayload:
+    def _extract_token_payload_from_manager(
+        self, request: Request, *, allow_refresh: bool = True
+    ) -> TokenPayload:
         """
         Try each loaded manager until one decodes the request's token.
 
@@ -527,16 +546,47 @@ class TokenSecurity(APIKeyBase):
 
         With one configured domain, which is the common case, "the last real failure" is
         simply the only failure, so the client sees the actual reason its token was
-        rejected.
+        rejected. `allow_refresh` changes nothing there, because there is only ever one
+        error to choose from.
 
-        An `UnknownKeyIdError` from any manager wins over the last error, because it is the
-        one failure the caller can do something about: it means a key rotation, and
-        `__call__` answers it with a refresh and a retry. This only decides which error is
-        raised when nothing decoded at all, so it never intercepts a `match_keys` refusal,
-        which leaves the loop directly.
+        ### Why `allow_refresh` exists
+
+        With several domains configured, one call can end holding two different failures:
+        an `UnknownKeyIdError` from a domain that has no key for this `kid`, and some other
+        error from a domain that got further. Those two answer two different questions, and
+        which one should be raised depends entirely on which question is being asked.
+
+        This method is called twice per request in the worst case, and the two calls want
+        opposite answers:
+
+        - **First pass** (`allow_refresh=True`, from `__call__`). The only decision riding
+          on this call is whether a JWKS refresh is worth a thread hop, so
+          `UnknownKeyIdError` wins. `__call__` catches exactly that type, and it is the
+          only failure a refresh can possibly repair. Losing it here would mean a genuine
+          provider key rotation goes unrecovered whenever some other domain happens to be
+          misconfigured, which trades a confusing status code for a real outage.
+        - **Retry pass** (`allow_refresh=False`, from `_refresh_and_retry`). The refresh
+          has already happened and did not help, so the unknown `kid` has said everything
+          it has to say and is now just a 401 standing in front of a better answer.
+          `last_error` wins, so a `PayloadMappingError` from another domain reaches the
+          client as the 500 it is rather than as an authentication failure. That matters
+          because the two send a reader to opposite places: 401 says "look at the token and
+          the provider", 500 says "look at your own `DomainConfig`".
+
+        So the flag does not describe this method's own behavior, it names which of the two
+        jobs the caller needs done. Collapsing the two passes back into one ordering
+        reintroduces one bug or the other, depending on which ordering is kept.
+
+        The choice only decides which error is raised when nothing decoded at all, so
+        neither pass ever intercepts a `match_keys` refusal, which leaves the loop directly.
 
         Args:
-            request: The request whose headers carry the token.
+            request:       The request whose headers carry the token.
+            allow_refresh: True when the caller can still answer an `UnknownKeyIdError`
+                           with a refresh, which makes that error the most useful one to
+                           raise. False on the retry pass, after the refresh has already
+                           been tried, where a more specific error from another domain is
+                           the better answer.
 
         Returns:
             The payload from the first manager that decoded the token and whose
@@ -544,7 +594,8 @@ class TokenSecurity(APIKeyBase):
 
         Raises:
             UnknownKeyIdError: At least one manager found no key carrying the token's
-                `kid`, and no manager decoded it. `__call__` catches this and retries once
+                `kid`, and no manager decoded it. Raised in preference to `last_error` only
+                when `allow_refresh` is True. `__call__` catches this and retries once
                 against a refreshed key set; uncaught it is an ordinary 401.
             AuthenticationError: No manager could decode the token, and none of them
                 raised anything more specific. Maps to 401.
@@ -555,7 +606,8 @@ class TokenSecurity(APIKeyBase):
             Exception: The last error raised by any manager, re-raised unchanged so its
                 own status and detail reach the client. Commonly an `AuthenticationError`
                 subclass from `armasec_lite.jwt`, or a `PayloadMappingError` (500) when a
-                `permission_extractor` did not match the token.
+                `permission_extractor` did not match the token. Wins over an
+                `UnknownKeyIdError` when `allow_refresh` is False.
         """
         self._load_all_managers()
 
@@ -579,10 +631,14 @@ class TokenSecurity(APIKeyBase):
             self._check_match_keys(token_payload, manager_config.domain_config)
             return token_payload
 
-        if unknown_kid_error is not None:
+        # The two orderings are not interchangeable, and each one is a bug in the other
+        # caller's context. See the docstring above before simplifying this.
+        if allow_refresh and unknown_kid_error is not None:
             raise unknown_kid_error
         if last_error is not None:
             raise last_error
+        if unknown_kid_error is not None:
+            raise unknown_kid_error
         raise AuthenticationError(
             "Not authenticated: could not find matching JWK with any input domain"
             " or token is malformed"
