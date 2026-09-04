@@ -1,0 +1,134 @@
+# Deploy the armasec-lite docs as a spoke site under /developer/armasec-lite/ on
+# docs.vantagecompute.ai (S3 + CloudFront).
+#
+# Auth is handled at the edge by the Lambda@Edge Keycloak gateway on all of /developer/*,
+# so there is no per-spoke auth configuration here and the site carries no login of its
+# own.
+#
+# Required repo variables:
+#   DOCS_BUCKET               S3 bucket name (shared with vantage-docs)
+#   DOCS_CF_DISTRIBUTION_ID   CloudFront distribution ID
+#
+# Required repo secrets:
+#   DOCS_SPOKE_ROLE_ARN       vantage-docs-spoke-armasec-lite, scoped to
+#                             developer/armasec-lite/*. Created by the vantage-docs hub
+#                             stack from its own spokes list, so there is no infrastructure
+#                             to deploy from here -- adding this repo to that list is what
+#                             brings the role into existence.
+
+name: Deploy docs (spoke)
+
+on:
+  push:
+    tags:
+      # Only a plain vX.Y.Z release publishes the docs. `v*` also matched a
+      # pre-release like v1.2.3rc1 and anything else beginning with v, so a release
+      # candidate silently replaced the published site. GitHub filter patterns are
+      # glob-like rather than regular expressions: `.` is literal and `+` means one
+      # or more of the preceding character, so this matches v1.2.3 and v10.20.30 and
+      # rejects v1.2.3rc1, v1.2 and vfoo.
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: docs-spoke
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # Submodules are checked out separately rather than with `submodules: recursive`,
+      # because .gitmodules records the SSH URL a developer uses and a runner has no SSH
+      # key. Rewriting the transport first keeps one URL form in .gitmodules for everyone
+      # and needs no secret: the plugin repository is public, so nothing here gains access
+      # to anything private. If it is ever made private, this stops working and the fix is
+      # a deploy key, not a wider rewrite rule.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Check out submodules over HTTPS
+        run: |
+          # --add on the second rule: insteadOf is multi-valued, so a plain `git config`
+          # REPLACES the previous value rather than appending, and setting both forms
+          # without it leaves only the last one. .gitmodules uses the scp-like
+          # git@github.com: form, so dropping that rule is what breaks it.
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git submodule update --init --recursive
+
+      # The API reference is generated from docstrings by the pydoc plugin, which parses
+      # the source with `ast` and never imports it. So this needs an interpreter able to
+      # parse the project's syntax, but deliberately not its dependencies or its
+      # virtualenv -- which is why there is no `uv sync` here. armasec-lite requires
+      # Python 3.12+, so 3.12 is enough.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docusaurus/package-lock.json
+
+      - name: Install docs dependencies
+        working-directory: docusaurus
+        run: npm ci
+
+      - name: Build docs
+        working-directory: docusaurus
+        run: npm run build
+
+      # The plugin fails the build when introspection fails outright, and when every
+      # requested module documents nothing. This catches the case neither covers: a partial
+      # generation, where some modules landed and others silently did not.
+      #
+      # Counts against the module list in the config rather than a list repeated here, so
+      # a module added to the site cannot be forgotten in the check. This site has a
+      # single plugin instance, so `instances` is always 1 and accounts for the one
+      # generated index.md that is not itself a module page.
+      - name: Verify the API reference is complete
+        working-directory: docusaurus
+        run: |
+          declared=$(grep -cE "^\s+\{module: " docusaurus.config.ts)
+          instances=$(grep -cE "^\s+id: '" docusaurus.config.ts)
+          generated=$(( $(find docs/api-reference -mindepth 1 -name '*.md' | wc -l) - instances ))
+
+          if [ "$generated" -ne "$declared" ]; then
+            echo "API reference is incomplete: $declared modules declared, $generated pages generated."
+            echo "Likely cause: a module was renamed or moved without updating the plugin's"
+            echo "module list in docusaurus/docusaurus.config.ts."
+            exit 1
+          fi
+
+          echo "API reference OK: $generated pages for $declared declared modules"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          role-to-assume: ${{ secrets.DOCS_SPOKE_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # --delete is safe here and only here: the hub excludes every spoke listed in
+      # .developer-subsites from its own sync, so this subtree is owned by this repo alone.
+      - name: Sync to S3
+        run: |
+          aws s3 sync docusaurus/build/ "s3://${{ vars.DOCS_BUCKET }}/developer/armasec-lite/" --delete
+
+      - name: Invalidate CloudFront
+        env:
+          DOCS_CF_DISTRIBUTION_ID: ${{ vars.DOCS_CF_DISTRIBUTION_ID }}
+        run: |
+          if [ -z "${DOCS_CF_DISTRIBUTION_ID}" ]; then
+            echo "DOCS_CF_DISTRIBUTION_ID is not set; skipping CloudFront invalidation."
+            exit 0
+          fi
+          aws cloudfront create-invalidation \
+            --distribution-id "${DOCS_CF_DISTRIBUTION_ID}" \
+            --paths "/developer/armasec-lite/*"
