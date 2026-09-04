@@ -1,5 +1,44 @@
 """
-The FastAPI injectable that enforces authentication and authorization on a route.
+The FastAPI injectable that guards a route.
+
+`TokenSecurity` is where a request actually meets this library. Everything else exists to
+serve `TokenSecurity.__call__`, which FastAPI invokes through `Depends()` before the route
+handler runs. It returns a `TokenPayload` on success and raises an `HTTPException` on
+every failure, so a route handler that runs at all has already been authenticated and
+authorized.
+
+## Where it sits in the request path
+
+`Armasec.lockdown()` builds and memoizes these; a route declares one as a dependency. On
+the first request that reaches a given instance, `__call__` builds a `TokenManager` per
+configured domain, each wrapping a `TokenDecoder` over a JWKS fetched by a shared
+`OpenidConfigLoader`. From then on the instance holds those managers and does no network
+work at all.
+
+## The executor hop
+
+That first load is synchronous network work, and it runs in an executor rather than on
+the event loop. Upstream armasec calls synchronous `httpx.get` directly inside this
+coroutine, which stalls every other request in the process for the duration, including
+requests to routes that need no authentication whatsoever.
+
+The hop happens only on that cold path. Once the managers are cached, the warm path is
+pure in-memory work: unpack a header, verify a signature, compare some sets. Hopping to a
+thread for that would add a scheduling round trip to every authenticated request and buy
+nothing.
+
+## What failure looks like
+
+Each stage catches broadly and translates through `_http_exception`, which reads
+`status_code` and `detail` off the error when it carries them. So an `AuthenticationError`
+becomes 401, an `AuthorizationError` becomes 403, a `PayloadMappingError` becomes 500, and
+a plugin's own `ArmasecError` subclass becomes whatever status it declares. Anything else
+falls back to the stage's default. `WWW-Authenticate: Bearer` is set on all of them.
+
+`debug_exceptions=True` re-raises the original error instead of translating it. It is a
+development aid for seeing the real traceback, and it is developer supplied rather than
+attacker reachable, but a production service running with it on leaks internal detail into
+its responses.
 """
 
 from __future__ import annotations
@@ -43,6 +82,33 @@ class ManagerConfig:
 class TokenSecurity(APIKeyBase):
     """
     An injectable Security class that returns a TokenPayload when used with Depends().
+
+    Subclasses FastAPI's `APIKeyBase` so the `Authorization` header shows up in the
+    generated OpenAPI schema and the docs page grows an authorize button. That is the only
+    reason for the base class; none of its behavior is used.
+
+    Instances are effectively singletons per lockdown: `Armasec.lockdown()` memoizes on
+    the scope set, so the manager cache below is shared by every request to every route
+    declaring the same scopes.
+
+    Attributes:
+        domain_configs:   The OIDC domains a token may be authenticated against. A token
+                          is accepted if any one of them can decode it.
+        scopes:           Permissions the token must carry, or None to check none.
+        permission_mode:  How `scopes` is matched. ALL requires every one, SOME requires
+                          at least one.
+        debug_logger:     A callable such as `logger.debug`. Defaults to `noop`, which
+                          several call sites check for by identity to skip formatting
+                          work entirely.
+        debug_exceptions: If True, re-raise the original error rather than translating it
+                          into an HTTPException. Testing and debugging only.
+        skip_plugins:     If True, registered plugin checks are not evaluated for routes
+                          guarded by this instance.
+        model:            The FastAPI `APIKey` model that puts this scheme into the
+                          OpenAPI document.
+        scheme_name:      The name the scheme appears under in that document.
+        managers:         The per-domain `ManagerConfig` list, empty until the first
+                          request populates it. Its emptiness is the cold-path flag.
     """
 
     def __init__(
@@ -55,15 +121,24 @@ class TokenSecurity(APIKeyBase):
         skip_plugins: bool = False,
     ):
         """
-        Initialize the TokenSecurity instance.
+        Record the settings this instance will enforce. No network work happens here.
+
+        Construction is deliberately inert: providers are contacted on the first request,
+        not at import. An application that builds its `Armasec` at module scope therefore
+        starts even when its OIDC provider is unreachable, and fails per request instead
+        of failing to boot.
 
         Args:
-            domain_configs:   Domain configurations to authenticate tokens against.
-            scopes:           Optional permission scopes that should be checked.
+            domain_configs:   Domain configurations to authenticate tokens against. A
+                              token is accepted if any one of them decodes it.
+            scopes:           Optional permission scopes that should be checked. When
+                              empty or None, authentication is required but no permission
+                              check is performed.
             permission_mode:  How the scopes are matched. ALL or SOME.
-            debug_logger:     A callable such as `logger.debug`.
+            debug_logger:     A callable such as `logger.debug`. Defaults to `noop`.
             debug_exceptions: If True, raise original exceptions instead of translating
-                              them into HTTPExceptions. Testing and debugging only.
+                              them into HTTPExceptions. Testing and debugging only; it
+                              leaks internal detail into responses.
             skip_plugins:     If True, do not evaluate plugin validators.
         """
         self.domain_configs = domain_configs
@@ -88,9 +163,18 @@ class TokenSecurity(APIKeyBase):
         """
         Translate an internal error into the response a client should see.
 
+        The error's own `status_code` and `detail` win when it has them, which is how an
+        `ArmasecError` subclass, including one raised by a third party plugin, chooses the
+        status a client sees. `default_status` covers everything else, so an unexpected
+        error from deep in the stack still answers with the stage's intended status rather
+        than leaking a 500.
+
         Args:
             err:            The error raised during validation.
             default_status: The status to use when the error carries none.
+
+        Returns:
+            The HTTPException to raise, always carrying `WWW-Authenticate: Bearer`.
         """
         return HTTPException(
             status_code=getattr(err, "status_code", default_status),
@@ -102,19 +186,63 @@ class TokenSecurity(APIKeyBase):
         """
         Validate a request, returning its token payload or raising an HTTPException.
 
-        Called by FastAPI's dependency injection when this instance is injected with
-        Depends(). The first call for a given domain loads the provider's configuration
-        and keys. That load is synchronous network work, so it runs in an executor rather
-        than on the event loop. Upstream armasec calls synchronous `httpx.get` directly
-        inside this coroutine, which stalls every other request in the process, including
-        ones that need no authentication at all.
+        This is the method the whole library exists to serve. FastAPI's dependency
+        injection calls it before the route handler runs, whenever this instance is
+        declared with `Depends()` or `Security()`. If it returns, the request is
+        authenticated, carries the required permissions, and has satisfied every
+        registered plugin. If it raises, the handler never runs.
 
-        The executor hop happens only on that cold path. Once the managers are cached,
-        everything below is pure in-memory work, so hopping again would add a scheduling
-        round trip to every request for nothing.
+        Four stages, in order, each translating its failures to a different status:
+
+        1. **Cold load**, only when `self.managers` is still empty. Fetches each domain's
+           openid-configuration and JWKS and builds a `TokenManager` per domain. Failure
+           is 401.
+        2. **Decode.** Tries each manager in turn against the request's `Authorization`
+           header and returns the first payload that decodes, then checks that domain's
+           `match_keys`. Failure is 401 by default, but the real error's own status wins,
+           so a `PayloadMappingError` from a bad `permission_extractor` surfaces as 500,
+           which is correct: that is a server misconfiguration, not a bad request.
+        3. **Scopes**, only when `self.scopes` is non-empty. Failure is 403.
+        4. **Plugins**, unless `skip_plugins`. Every registered `armasec_plugin_check`
+           implementation runs, and any exception denies the request. Failure defaults to
+           403, but a plugin raising its own `ArmasecError` subclass chooses the status,
+           so a plugin can answer 402 or anything else it likes.
+
+        The cold load runs in an executor. It is synchronous network work, and running it
+        inline would stall the event loop for the whole fetch, blocking every other
+        request in the process including ones that need no authentication at all, which is
+        what upstream armasec does by calling `httpx.get` directly inside this coroutine.
+
+        The executor hop happens only on that cold path. The warm path below is pure
+        in-memory work: read a header, verify a signature, compare some sets. Hopping to a
+        thread for that would add a scheduling round trip to every authenticated request
+        and buy nothing.
+
+        The cold load is not itself the concurrency control. `OpenidConfigLoader` holds a
+        `threading.Lock` and is shared process-wide, so N simultaneous first requests
+        produce one fetch rather than N.
 
         Args:
-            request: The FastAPI request to check for secure access.
+            request: The FastAPI request to check for secure access. Only its headers are
+                     read here; the whole object is passed on to plugin checks, which may
+                     look at anything on it.
+
+        Returns:
+            The decoded, verified `TokenPayload`. FastAPI injects this into the route
+            handler as the dependency's value, so a handler parameter annotated with it
+            receives the caller's identity and permissions.
+
+        Raises:
+            HTTPException: Every failure, unless `debug_exceptions` is set. 401 when the
+                token is absent, malformed, expired, or does not verify. 403 when it
+                verifies but lacks the required scopes, fails a domain's `match_keys`, or
+                is denied by a plugin. 500 when a configured `permission_extractor` does
+                not match the token's shape. Whatever status a plugin's own error
+                declares, otherwise. Every response carries
+                `WWW-Authenticate: Bearer`.
+            Exception: The original error, unwrapped, when `debug_exceptions` is True.
+                Typically an `AuthenticationError`, `AuthorizationError` or
+                `PayloadMappingError`. Testing and debugging only.
         """
         if not self.managers:
             loop = asyncio.get_running_loop()
@@ -161,6 +289,12 @@ class TokenSecurity(APIKeyBase):
 
         Args:
             token_payload: The decoded token.
+
+        Raises:
+            AuthorizationError: The token is missing a required permission under ALL, or
+                carries none of them under SOME, or `permission_mode` is a value neither
+                branch recognizes. Maps to 403: the caller is authenticated, just not
+                allowed.
         """
         token_permissions = set(token_payload.permissions)
         my_permissions = set(self.scopes or ())
@@ -200,6 +334,20 @@ class TokenSecurity(APIKeyBase):
     def _load_all_managers(self) -> None:
         """
         Build a TokenManager for each configured domain, skipping ones that fail.
+
+        Idempotent, and cheap to call again: it returns immediately once anything is
+        cached. A domain that fails to load is skipped rather than fatal, so one
+        unreachable or misconfigured provider does not take down authentication against
+        every other configured domain. Only "all of them failed" is an error.
+
+        The skipped domain is not retried until the whole instance is reloaded, so a
+        provider that was down at first-request time stays out of rotation for the life of
+        the process. That is a known limitation, not an oversight.
+
+        Raises:
+            AuthenticationError: Every configured domain failed to load, so no token can
+                be verified at all. Maps to 401, though the fault is nearly always
+                configuration or provider availability rather than the request.
         """
         if self.managers:
             return
@@ -231,6 +379,15 @@ class TokenSecurity(APIKeyBase):
 
         Args:
             domain_config: The domain to build a manager for.
+
+        Returns:
+            A manager wired to a decoder over that domain's JWKS, with the loader's
+            `refresh_jwks` attached so a provider key rotation can be recovered from
+            without a restart.
+
+        Raises:
+            AuthenticationError: The provider's openid-configuration or JWKS could not be
+                fetched or did not validate. The caller catches this per domain.
         """
         self.debug_logger(f"Lazy loading TokenManager for domain {domain_config.domain}")
         # The shared loader is what turns 2N HTTP calls for N lockdown scope sets into 2.
@@ -259,9 +416,21 @@ class TokenSecurity(APIKeyBase):
         """
         Require the configured key/value pairs to be present in the token.
 
+        How a value is matched depends on its type. A bool is compared by identity rather
+        than equality, because `1 == True` in Python and a token carrying 1 where True is
+        required should not pass. A str, int or float is compared by equality. Anything
+        else is treated as a collection and matched if it intersects the token's value.
+
+        Reads the claim with `getattr`, which works for arbitrary claims because
+        `TokenPayload` sets `extra="allow"` and puts unknown members on the model itself.
+
         Args:
             token_payload: The decoded token.
             domain_config: The domain whose match_keys should be enforced.
+
+        Raises:
+            AuthorizationError: A configured key is absent from the token or does not
+                match. Maps to 403: the token verified, it just is not for this caller.
         """
         message = "Not authorized: token doesn't contain necessary key-value pairs"
         for key_to_match, value_to_match in domain_config.match_keys.items():
@@ -285,8 +454,28 @@ class TokenSecurity(APIKeyBase):
         manager's exception and then asserts the payload is not None, which surfaces to the
         caller as a bare AttributeError and says nothing about what actually went wrong.
 
+        With one configured domain, which is the common case, "the last real failure" is
+        simply the only failure, so the client sees the actual reason its token was
+        rejected.
+
         Args:
             request: The request whose headers carry the token.
+
+        Returns:
+            The payload from the first manager that decoded the token and whose
+            `match_keys` the payload satisfied.
+
+        Raises:
+            AuthenticationError: No manager could decode the token, and none of them
+                raised anything more specific. Maps to 401.
+            AuthorizationError: A manager decoded the token but its domain's `match_keys`
+                were not satisfied. Maps to 403, and is not caught here: a token that
+                verified against a domain but failed its match keys is a definite refusal,
+                not a reason to try the next domain.
+            Exception: The last error raised by any manager, re-raised unchanged so its
+                own status and detail reach the client. Commonly an `AuthenticationError`
+                subclass from `armasec_lite.jwt`, or a `PayloadMappingError` (500) when a
+                `permission_extractor` did not match the token.
         """
         self._load_all_managers()
 
