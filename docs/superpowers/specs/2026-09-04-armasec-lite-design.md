@@ -13,7 +13,7 @@ entirely on the Python standard library.
 Upstream carries ten runtime dependencies. Two of them (`pytest`, `respx`) are test tools
 forced into every production install. Four more (`snick`, `py-buzz`, `auto-name-enum`,
 `pluggy`) provide small conveniences that the standard library covers directly.
-`armasec-lite` ships two runtime dependencies.
+`armasec-lite` ships three runtime dependencies, one of which (`pydantic`) is a transitive dependency of `fastapi` and is therefore installed either way.
 
 ### Dependency reduction
 
@@ -21,7 +21,7 @@ forced into every production install. Four more (`snick`, `py-buzz`, `auto-name-
 | --- | --- |
 | `python-jose[cryptography]` | `jwt.py` (stdlib parsing, `cryptography` primitives) |
 | `httpx` | `urllib.request` |
-| `pydantic` | `dataclasses` (`armasec_lite.schemas`) |
+| `pydantic` | **kept** (see Decision 7): fastapi requires it, so it costs nothing |
 | `py-buzz` | `exceptions.py` (~50 LOC) |
 | `snick` | `textwrap` |
 | `auto-name-enum` | `enum.Enum` |
@@ -56,7 +56,7 @@ implementation.
    `alg: none`, PKCS#1 v1.5 padding forgery). A pure-stdlib path would also cap support
    at RS\* and HS\*, excluding ES256, which Auth0 and Keycloak both issue in common
    configurations. `python-jose[cryptography]` already installs `cryptography`, so the
-   dependency count still drops from ten to two. Everything other than the primitive
+   dependency count still drops from ten to three. Everything other than the primitive
    signature check is stdlib.
 3. **`verify_issuer` defaults to `True`.** Upstream loads `openid_config.issuer` and then
    never checks it, so a token from any provider whose JWK happens to match will pass. The
@@ -66,7 +66,20 @@ implementation.
    `threading.Lock`, with rate-limited JWKS refetch on unknown `kid`.
 5. **No performance number is hand-authored.** Every figure in the documentation site is
    generated from a committed benchmark result file. See the Benchmarks section.
-6. **This repository contains no `infra/` directory and deploys no AWS resources.** The
+6. **`pydantic` is a declared runtime dependency, and the models stay pydantic models.**
+   An earlier draft replaced them with dataclasses. That was wrong. `fastapi` requires
+   `pydantic` and imports it unconditionally, so it is present in every install no matter
+   what this project declares: dropping it saved zero bytes. What it cost was real, and
+   was caught in review. Hand-rolled dataclasses break `TokenPayload.model_dump()`,
+   `DomainConfig.model_validate()`, using either type as a FastAPI `response_model`, and
+   `except pydantic.ValidationError`, for every consumer migrating from upstream. That was
+   the single largest break in the migration table, traded for nothing. Declaring the
+   dependency is honesty about what is already shipped, and it deletes roughly two hundred
+   lines of hand-written validation, alias mapping and `__getattr__` fallthrough that would
+   otherwise have to be kept correct forever. The dependency reduction that matters is
+   untouched: `python-jose`, `py-buzz`, `snick`, `auto-name-enum`, `pluggy`, `respx` and
+   runtime `pytest` all still go, and `jwt.py` is still written here.
+7. **This repository contains no `infra/` directory and deploys no AWS resources.** The
    spoke deploy role is created by the `vantage-docs` hub stack from its own `spokes`
    context, so registering there is the whole of the infrastructure work. `vantage-mcp-infra`
    carries CDK because it deploys Lambdas, DynamoDB and a CloudFront distribution;
@@ -119,6 +132,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.141.1,<1",
     "cryptography>=50.0.1,<51",
+    "pydantic>=2.13.5,<3",
 ]
 
 [project.optional-dependencies]
@@ -127,15 +141,20 @@ test = ["pytest>=9.1.1,<10"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1,<10",
-    "pytest-asyncio",
+    "pytest-asyncio>=1.4.0,<2",
+    "pytest-cov>=7.1.0,<8",
     "pyjwt>=2.13.0,<3",
-    "httpx",
-    "mypy",
-    "ruff",
+    "httpx2>=2.12.0,<3",
+    "mypy>=2.3.1,<3",
+    "ruff>=0.16.6,<1",
 ]
+# Upstream armasec is deliberately NOT listed here. It declares pytest<9 and respx as
+# RUNTIME dependencies, so adding it makes this project's lockfile unsatisfiable against
+# pytest>=9.1. That constraint leaking into a consumer's environment is the exact defect
+# armasec-lite exists to remove. The comparison harness installs upstream armasec into
+# isolated uv venvs and Docker containers instead.
 bench = [
     "plotly>=6,<7",
-    "armasec==3.0.3",
 ]
 
 [project.entry-points."pytest11"]
@@ -147,13 +166,16 @@ build-backend = "hatchling.build"
 ```
 
 `cryptography` is capped below the next major because it ships compiled Rust and has
-broken API across majors. `pyjwt` and `httpx` are development-only: `pyjwt` is the
-cross-validation oracle described under Testing, `httpx` backs FastAPI's `TestClient`.
-Neither reaches a production install.
+broken API across majors. `pyjwt` and `httpx2` are development-only: `pyjwt` is the
+cross-validation oracle described under Testing, `httpx2` backs FastAPI's `TestClient`
+(Starlette 1.6 deprecates plain `httpx` for that use). Neither reaches a production install.
 
-The `bench` group is separate from `dev` and exists only to run the comparison benchmarks.
-It pins upstream `armasec==3.0.3` as the subject under test and `plotly` for building the
-figure specs. `plotly` builds JSON only; there is no `kaleido` and no static image export,
+The `bench` group is separate from `dev` and exists only to build the chart specs. It
+cannot contain upstream `armasec`: armasec 3.0.3 declares `pytest<9,>=6` and `respx` as
+runtime dependencies, which is unsatisfiable against this project's `pytest>=9.1.1` in
+uv's single universal lockfile. That is the defect this project exists to remove, so the
+right answer is to keep upstream out of this dependency graph entirely rather than to
+downgrade our own toolchain to accommodate it. `plotly` builds JSON only; there is no `kaleido` and no static image export,
 because the site renders the specs client-side. Benchmarks that need isolated environments
 shell out to `uv venv` rather than resolving anything into this project's environment.
 
@@ -260,37 +282,39 @@ Named `schemas` rather than `models` so that upstream's
 `from armasec_lite.schemas import DomainConfig` with only the package name changed. It is
 a module, not a package, since it is four small types.
 
-Plain `@dataclass` types, each with a `from_dict()` classmethod that validates required
-fields and their types and ignores unknown keys, matching pydantic's `extra="allow"`
-where upstream used it.
+Pydantic `BaseModel` types, as upstream has them (see Decision 6). Upstream's field
+definitions are kept unless a change is called for below.
 
-- `JWK`: `alg`, `e`, `kid`, `kty`, `n` required upstream. This is wrong for non-RSA keys,
-  so in `armasec-lite` only `kty` and `kid` are unconditionally required; `n`/`e`,
-  `crv`/`x`/`y`, and `k` are validated per key type at use time in `jwt.py`. Unknown
-  members are retained in `extra`.
+- `JWK`: upstream requires `alg`, `e`, `kid`, `kty`, `n`. That is wrong for non-RSA keys,
+  which have no `n` or `e`, so a provider serving an EC or OKP key in its JWKS makes
+  upstream fail to parse the document at all. Here only `kty` and `kid` are required;
+  `n`/`e`, `crv`/`x`/`y` and `k` are optional and validated per key type at use time in
+  `jwt.py`, where the algorithm is known. `model_config = ConfigDict(extra="allow")`.
 - `JWKs`: `keys: list[JWK]`.
-- `OpenidConfig`: `issuer`, `jwks_uri`. These lose pydantic's `AnyHttpUrl` validation, so
-  they are checked with `urllib.parse.urlparse` for a scheme in `("http", "https")` and a
-  non-empty netloc. `jwks_uri` arrives inside a remote document that we then fetch, so its
-  scheme is additionally pinned to match the domain's `use_https` setting.
-- `DomainConfig`: `domain`, `audience`, `ignore_audience`, `algorithm`, `use_https`,
-  `match_keys`, `permission_extractor`, plus the new `verify_issuer: bool = True`.
-  Validated in `__post_init__`.
+- `OpenidConfig`: `issuer` and `jwks_uri`, keeping upstream's `AnyHttpUrl`. `jwks_uri`
+  arrives inside a remote document that is then fetched, so a field validator additionally
+  pins its scheme to match the domain's `use_https` setting. `extra="allow"`.
+- `DomainConfig`: upstream's `domain`, `audience`, `ignore_audience`, `algorithm`,
+  `use_https`, `match_keys` and `permission_extractor`, plus the new
+  `verify_issuer: bool = True`.
 
 `PermissionMode` becomes `class PermissionMode(str, Enum)` with `ALL = "ALL"` and
-`SOME = "SOME"`, preserving upstream's `AutoNameEnum` string values.
+`SOME = "SOME"`, preserving upstream's `AutoNameEnum` string values. `auto-name-enum` is
+still dropped; only the two-line enum replaces it.
 
 ### `token_payload.py`
 
-`TokenPayload` needs arbitrary-claim attribute access: `match_keys` does
-`getattr(token_payload, key)`, and the documented plugin example reads `.email`. So it is
-a dataclass with the known fields `sub`, `permissions`, `expire`, `client_id`,
-`original_token`, plus `extra: dict`, and a `__getattr__` that falls through to `extra`
-and raises `AttributeError` on a miss.
+A pydantic `BaseModel`, unchanged in shape from upstream: `sub`, `permissions`, `expire`,
+`client_id`, `original_token`, with `model_config = ConfigDict(extra="allow")`.
 
-Alias handling moves out of pydantic field aliases into a `from_claims()` classmethod:
-`exp` maps to `expire` (converted to an aware `datetime`), `azp` maps to `client_id`.
-`to_dict()` is preserved for compatibility.
+`extra="allow"` is what gives arbitrary-claim attribute access, which the library depends
+on in two places: `match_keys` does `getattr(token_payload, key)`, and the documented
+plugin example reads `.email`. Upstream's `AliasChoices` handling is kept as it is, so
+`exp` populates `expire` and `azp` populates `client_id`.
+
+Because this is a pydantic model, `model_dump()`, `model_dump_json()` and use as a FastAPI
+`response_model` all work exactly as they do upstream. `to_dict()` is preserved as well,
+since upstream defines it and consumers may call it.
 
 ### `exceptions.py`
 
@@ -491,9 +515,11 @@ This is the authoritative list. The README's migration section and the docs site
 migration page both derive from it, and neither may add to it or contradict it.
 
 An earlier draft of this spec claimed there were "two differences that can change behavior
-on upgrade". That was wrong, and it under-counted the most disruptive one. Replacing
-pydantic with dataclasses is not an internal detail: it is visible to every consumer that
-touches a `TokenPayload` or a `DomainConfig`.
+on upgrade". That was wrong: review found several more, the largest being that replacing
+pydantic with dataclasses would have broken `model_dump()`, `model_validate()`,
+`response_model=TokenPayload` and `except pydantic.ValidationError` for every consumer.
+That finding is what led to Decision 6, which keeps pydantic and removes that break
+entirely. The table below is what remains after it.
 
 **Requires action from an integrator:**
 
@@ -501,7 +527,6 @@ touches a `TokenPayload` or a `DomainConfig`.
 | --- | --- | --- |
 | Import name is `armasec_lite` | Every import line | A scoped `sed` over the project's own sources |
 | `verify_issuer` defaults to `True` | Routes 401 when the provider's discovery `issuer` does not exactly match the `iss` it mints, most often over a trailing slash | Correct the provider, or `DomainConfig(verify_issuer=False)` |
-| `schemas` and `token_payload` are dataclasses, not pydantic models | `TokenPayload.model_dump()`, `.dict()`, `.json()`, `DomainConfig.model_validate()`, using either as a FastAPI `response_model`, and `except pydantic.ValidationError` | `to_dict()` is preserved. Anything else needs rewriting against plain attributes |
 | Errors no longer derive from py-buzz | `except buzz.Buzz` stops catching `ArmasecError` | Catch `armasec_lite.exceptions.ArmasecError` |
 | The pytest fixtures live behind the `[test]` extra | A ported test suite cannot import the fixtures from a plain install, because upstream forced `pytest` into every install and this does not | Depend on `armasec-lite[test]` |
 | The OIDC loader cache is process-wide | Tests that expect per-instance provider state now share it | `openid_config_loader.clear_cache()`, or the `mock_openid_server` fixture, which calls it automatically |
@@ -512,6 +537,8 @@ touches a `TokenPayload` or a `DomainConfig`.
 | Difference | Why it is safe |
 | --- | --- |
 | `TokenDecoder` gained an optional `jwks_refresher` keyword argument | Purely additive; the first positional argument is still `JWKs`, so existing construction sites are unaffected |
+| Models remain pydantic | `model_dump()`, `model_validate()`, `response_model=` and `pydantic.ValidationError` all keep working, as upstream (Decision 6) |
+| `JWK` no longer requires `n` and `e` | Strictly more permissive. Upstream fails to parse a JWKS document containing an EC or OKP key; this parses it |
 
 Upstream armasec **3.x** is the migration source. Migrating from 2.x is out of scope and
 untested; a 2.x consumer should upgrade to 3.x first and confirm their application works.
