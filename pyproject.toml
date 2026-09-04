@@ -62,9 +62,11 @@ markers = [
 
 [tool.ruff]
 line-length = 100
-# docusaurus/vendor is a vendored git submodule, not code this project owns or can fix;
-# its own repository lints it. docs/superpowers holds planning and spec prose (ruff 0.16
-# lints and formats fenced Python in Markdown by default), not shipped code or docs.
+# docusaurus/vendor is left over from when the pydoc plugin was vendored here; it now comes
+# from npm, so there is no submodule and normally no such directory. The entry stays so a
+# hand-vendored copy of a third-party plugin is never linted by this project, which does not
+# own it and cannot fix it. docs/superpowers holds planning and spec prose (ruff 0.16 lints
+# and formats fenced Python in Markdown by default), not shipped code or docs.
 extend-exclude = ["docusaurus/vendor", "docs/superpowers", ".worktrees"]
 
 [tool.mypy]

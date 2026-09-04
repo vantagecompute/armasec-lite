@@ -54,7 +54,7 @@ bytes.
 | --- | --- |
 | `python-jose[cryptography]` | `jwt.py` (stdlib parsing, `cryptography` primitives) |
 | `httpx` | `urllib.request` |
-| `pydantic` | **kept** (see Decision 7): fastapi requires it, so it costs nothing |
+| `pydantic` | **kept**: fastapi requires it, so it costs nothing |
 | `py-buzz` | `exceptions.py` (~50 LOC) |
 | `snick` | `textwrap` |
 | `auto-name-enum` | `enum.Enum` |
@@ -81,6 +81,7 @@ confirm their application works there.
 | The pytest fixtures live behind the `[test]` extra | A ported test suite cannot import the fixtures from a plain install, because upstream forced `pytest` into every install and this does not | Depend on `armasec-lite[test]` |
 | The OIDC loader cache is process-wide | Tests that expect per-instance provider state now share it | `openid_config_loader.clear_cache()`, or the `mock_openid_server` fixture, which calls it automatically |
 | The CLI is not included | `armasec` console script is gone | Out of scope; see below |
+| `exp`, `nbf` and `iat` must be finite numbers, and JSON `Infinity`/`NaN` are refused outright | A token carrying `"exp": 1e400`, or a payload containing the non-standard JSON constants, was accepted upstream and is now a 401 | Nothing, unless a provider is minting such tokens, in which case fix the provider: an `exp` of infinity is a token that never expires |
 
 ### Requires no action, listed so the API diff is complete
 
@@ -89,6 +90,11 @@ confirm their application works there.
 | `TokenDecoder` gained an optional `jwks_refresher` keyword argument | Purely additive; the first positional argument is still `JWKs`, so existing construction sites are unaffected |
 | Models remain pydantic | `model_dump()`, `model_validate()`, `response_model=` and `pydantic.ValidationError` all keep working, as upstream |
 | `JWK` no longer requires `n` and `e` | Strictly more permissive. Upstream fails to parse a JWKS document containing an EC or OKP key; this parses it |
+| `handle_errors` re-raises an `ArmasecError` subclass unchanged instead of re-wrapping it | Deliberate, and a deviation from py-buzz. Re-wrapping would let the `PayloadMappingError` block in `TokenDecoder.decode` swallow a genuine `AuthenticationError` and turn a 401 into a 500. Anything that is not already an `ArmasecError` is still wrapped, so the contract holds for every foreign error |
+| `DomainConfig.domain` is required and must be non-empty, where upstream defaults it to `""` | An empty domain builds the discovery URL `https:///.well-known/openid-configuration` and fails at request time with an error that names neither the domain nor the configuration. The only caller that relied on the empty default, `Armasec.__init__`, checks for the keyword before constructing, so `Armasec()` still raises its own 422 |
+| `DomainConfig.algorithm` is checked against the supported set at construction | Strictly earlier failure. A typo previously configured a route that refused every token it was ever shown, with a message about the token |
+| `UnknownKeyIdError` is a new public exception type | An `AuthenticationError` subclass carrying the same 401. Nothing that caught `AuthenticationError` stops catching it; it exists so the library can tell "no key matched" apart from every other 401 and refresh the JWKS in response |
+| The RFC 7515 unsecured JWS shape returns `InvalidAlgorithmError` | Still a 401, still an `AuthenticationError` subclass. Only the error type and message are more specific, which is what makes an `alg: none` attempt legible in a log |
 
 ## What is not included
 
@@ -103,10 +109,13 @@ if there is demand for one.
 
 Signature verification delegates entirely to `cryptography`; nothing here hand-rolls RSA,
 ECDSA, EdDSA, or HMAC primitives. The verification order implemented in
-`armasec_lite/jwt.py` (algorithm allowlist check, JWK-type-versus-algorithm matching,
-`crit` header validation, then signature verification, and only afterward claim
-validation) is a security property, not an implementation detail, and is documented with
-its rationale directly in that module. `tests/unit/test_jwt_attacks.py` is the
+`armasec_lite/jwt.py` (structural checks, then the algorithm allowlist, then `crit` header
+validation, then signature verification with the JWK-type-versus-algorithm check inside it,
+and only afterward claim validation) is a security property, not an implementation detail,
+and is documented with its rationale directly in that module. Two orderings carry the
+security of the module: the algorithm is decided from the caller's allowlist before any key
+is touched, and nothing in the payload is read until the signature has verified.
+`tests/unit/test_jwt_attacks.py` is the
 enumeration of what is defended: `alg: none`, algorithm confusion, disallowed algorithms,
 `kid` mismatch, tampered headers and payloads, malformed ECDSA signature lengths,
 unrecognized `crit` entries, expired and not-yet-valid tokens, and audience/issuer

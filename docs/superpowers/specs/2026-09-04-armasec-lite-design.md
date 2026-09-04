@@ -21,7 +21,7 @@ forced into every production install. Four more (`snick`, `py-buzz`, `auto-name-
 | --- | --- |
 | `python-jose[cryptography]` | `jwt.py` (stdlib parsing, `cryptography` primitives) |
 | `httpx` | `urllib.request` |
-| `pydantic` | **kept** (see Decision 7): fastapi requires it, so it costs nothing |
+| `pydantic` | **kept** (see Decision 6): fastapi requires it, so it costs nothing |
 | `py-buzz` | `exceptions.py` (~50 LOC) |
 | `snick` | `textwrap` |
 | `auto-name-enum` | `enum.Enum` |
@@ -60,8 +60,11 @@ implementation.
    signature check is stdlib.
 3. **`verify_issuer` defaults to `True`.** Upstream loads `openid_config.issuer` and then
    never checks it, so a token from any provider whose JWK happens to match will pass. The
-   escape hatch is `DomainConfig(verify_issuer=False)`. This is the one intentional
-   behavior difference from upstream and must be documented in the README migration notes.
+   escape hatch is `DomainConfig(verify_issuer=False)`. It is the most consequential of the
+   intentional behavior differences from upstream, since it is the one that can 401 a
+   deployment that worked the day before, and it must be documented in the README migration
+   notes. The full set of differences is the table under "Differences from upstream", which
+   runs to several entries; this is not the only one.
 4. **The OIDC loader cache is process-wide, keyed by `(domain, use_https)`**, guarded by a
    `threading.Lock`, with rate-limited JWKS refetch on unknown `kid`.
 5. **No performance number is hand-authored.** Every figure in the documentation site is
@@ -118,6 +121,8 @@ FastAPI route
       2. TokenManager.extract_token_payload(request.headers)
            unpack bearer token from Authorization header
            TokenDecoder.decode(token) -> TokenPayload
+      2a. on UnknownKeyIdError from every configured domain:
+           executor hop -> refresh every manager's keys -> retry the extraction once
       3. match_keys check          -> AuthorizationError (403)
       4. scope check per PermissionMode -> AuthorizationError (403)
       5. plugin hooks              -> plugin-defined error
@@ -125,6 +130,14 @@ FastAPI route
 ```
 
 ## Packaging
+
+The block below is a dependency-relevant excerpt of `pyproject.toml`, not the whole file.
+The shipped file additionally carries `[project.urls]`, the trove classifiers,
+`[tool.pytest.ini_options]` (`minversion`, `testpaths`, `asyncio_mode = "auto"`, and the
+`integration` marker), `[tool.ruff]` (`line-length = 100` and an `extend-exclude` covering
+`docs/superpowers` and `.worktrees`, since ruff 0.16 lints fenced Python inside Markdown by
+default and this spec is full of it), `[tool.mypy]` with
+`strict = true`, and `[tool.hatch.build.targets.wheel]` naming the one package.
 
 ```toml
 requires-python = ">=3.12"
@@ -202,28 +215,67 @@ def decode(
 def encode(claims: dict, key: bytes, algorithm: str, headers: dict | None = None) -> str: ...
 
 def get_unverified_header(token: str) -> dict: ...
+
+def verify_signature(algorithm: str, jwk: JWK, signing_input: bytes, signature: bytes) -> None: ...
+
+def split_token(token: str) -> tuple[str, str, str]: ...
+
+def b64url_encode(data: bytes) -> str: ...
+
+def b64url_decode(segment: str) -> bytes: ...
+
+SUPPORTED_ALGORITHMS: frozenset[str]
 ```
+
+`decode`, `encode` and `get_unverified_header` are the API the rest of the library calls.
+The other four names and the frozenset are public because the tests import them directly:
+`verify_signature` is where the attack suite aims most of its cases, and the base64url
+helpers and `split_token` are how a test constructs a deliberately malformed token without
+going through `encode`. `verify_signature` returns `None` on success and raises on failure,
+never a boolean, so a caller cannot authenticate a token by ignoring a result.
+
+`SUPPORTED_ALGORITHMS` is duplicated in `schemas.py` rather than imported from here,
+because `schemas.py` cannot import `jwt.py`: `jwt.py` imports `JWK` from `schemas.py`, and
+importing back would be circular. The two copies are held in sync by a test
+(`tests/unit/test_schemas.py`) that asserts they are equal. That test is the only thing
+preventing them from diverging, which is worth knowing before deleting it.
 
 `encode` exists to serve the pytest extension's `build_rs256_token` fixture without a
 second signing dependency. It is public, documented as a testing aid, and not part of the
-request path.
+request path. It builds its header as `{"typ": "JWT", **(headers or {}), "alg": algorithm}`,
+placing `alg` last deliberately: a caller passing `headers={"alg": "none"}` must not be able
+to mint a token whose header disagrees with the signature the function then produces.
 
-**Verification order.** Steps 2 through 5 are the security core; the order is not an
-implementation detail and must not be rearranged.
+**Verification order.** The order is not an implementation detail. Two orderings carry the
+security of the module and neither may be relaxed: **the algorithm is decided from the
+caller's allowlist before any key is touched**, and **nothing in the payload is read until
+the signature has verified**. The numbering below describes the code; the two properties
+are what a change has to preserve.
 
+0. Refuse the RFC 7515 unsecured JWS shape, `"<header>.<payload>."` with an empty
+   signature, as `InvalidAlgorithmError`. It is a structurally valid serialization that
+   carries no signature at all, so it belongs to the algorithm rule rather than to generic
+   malformed-token handling, and reporting it as such is what makes the `alg: none` family
+   of attacks legible in a log.
 1. Split on `.`; require exactly three segments. Base64url-decode each with computed
-   padding, rejecting lengths that cannot be valid base64url (`len % 4 == 1`).
+   padding, rejecting lengths that cannot be valid base64url (`len % 4 == 1`). JSON
+   parsing of a segment additionally refuses `Infinity`, `-Infinity` and `NaN`, which
+   Python's `json` accepts by default and which are not valid JSON.
 2. Check `header["alg"]` against the caller-supplied `algorithms` allowlist. Never read
    the algorithm choice from the token itself. This is the `alg: none` and
-   algorithm-confusion defense.
-3. Check that the JWK's `kty` matches the algorithm family: `RS*`/`PS*` require `RSA`,
-   `ES*` require `EC`, `EdDSA` requires `OKP`, `HS*` require `oct`. This blocks the
-   classic forgery where an attacker signs with HS256 using the provider's RSA public key
-   as the HMAC secret.
-4. Reject any header listed in `crit` that is not recognized, per RFC 7515 section 4.1.11.
-5. Verify the signature over the ASCII bytes of `f"{header_b64}.{payload_b64}"`, before
-   parsing or trusting any claim.
-6. Only after signature verification, validate claims: `exp`, `nbf`, `iat`, `aud`, `iss`,
+   algorithm-confusion defense and it stays first.
+3. Reject any header listed in `crit`, per RFC 7515 section 4.1.11. This module recognizes
+   no critical extensions, so any `crit` entry at all is a refusal.
+4. Verify the signature over the ASCII bytes of `f"{header_b64}.{payload_b64}"`, before
+   parsing or trusting any claim. **The `kty` check lives inside `verify_signature`**, at
+   `_check_kty`: the JWK's `kty` must match the algorithm family, `RS*`/`PS*` requiring
+   `RSA`, `ES*` requiring `EC`, `EdDSA` requiring `OKP`, `HS*` requiring `oct`. That is
+   what blocks the classic forgery where an attacker signs with HS256 using the provider's
+   RSA public key as the HMAC secret. It sits inside `verify_signature` rather than in
+   `decode` so that every caller of `verify_signature` gets it, including the tests that
+   call it directly and any future caller that does not go through `decode`. Moving it out
+   into `decode` would weaken the defense to a convention.
+5. Only after signature verification, validate claims: `exp`, `nbf`, `iat`, `aud`, `iss`,
    each honoring `leeway`.
 
 **Algorithm support.**
@@ -256,6 +308,22 @@ weaker curve than the algorithm implies.
   is the path `DomainConfig.ignore_audience` already uses upstream.
 - `iss`: when `issuer` is supplied, require exact string equality.
 
+`exp`, `nbf` and `iat` go through one reader that refuses anything that is not a finite
+number. `bool` is rejected explicitly, since it is an `int` subclass and a boolean
+timestamp is always malformed. An integer beyond the float range, such as `10**400`, is
+refused rather than allowed to raise `OverflowError`, which would escape the module as
+something other than an `AuthenticationError` and break the contract every caller relies
+on. Together with the `Infinity`/`NaN` refusal at the parser, this closes the token that
+never expires: `{"exp": 1e400}` is ordinary JSON syntax that Python parses to a float
+infinity, and upstream accepts it.
+
+**Options.** `decode` takes a jose-shaped `options` dict merged over `_DEFAULT_OPTIONS`,
+which is `verify_signature`, `verify_exp`, `verify_nbf`, `verify_aud` and `verify_iss`, all
+defaulting to `True`. Unknown keys are ignored rather than rejected, matching the
+permissiveness callers expect from that API shape. `verify_signature: False` is a testing
+and debugging switch and nothing else: it accepts every token unconditionally, including
+one with no valid signature at all. Nothing in the library sets it.
+
 All failures raise subclasses of `armasec_lite.exceptions.AuthenticationError` so the
 existing `handle_errors` wrapping in `TokenDecoder` continues to work unchanged.
 
@@ -267,6 +335,14 @@ def get_json(url: str, *, timeout: float = 10.0) -> dict: ...
 
 Built on `urllib.request`, with hardening upstream's `httpx.get` call does not have:
 
+- A scheme guard refusing anything that is not `http` or `https`. This is the one item on
+  this list that looks redundant with the URL validation in `schemas.py` and is not.
+  `urllib.request.build_opener()` installs `FileHandler` among its defaults, so an opener
+  will happily read a `file://` URL and return its contents. `jwks_uri` arrives inside a
+  document fetched from the network and is then fetched in turn, so a `file://` value
+  reaching this call would turn a JWKS fetch into an arbitrary local file read whose
+  contents become the key set deciding who is authenticated. The guard belongs here, at
+  the call that actually opens the URL, in addition to the model that parses it.
 - An explicit `ssl.create_default_context()`, giving certificate and hostname verification.
 - A custom `HTTPRedirectHandler` that refuses an `https` to `http` downgrade and caps the
   redirect count.
@@ -291,12 +367,35 @@ definitions are kept unless a change is called for below.
   `n`/`e`, `crv`/`x`/`y` and `k` are optional and validated per key type at use time in
   `jwt.py`, where the algorithm is known. `model_config = ConfigDict(extra="allow")`.
 - `JWKs`: `keys: list[JWK]`.
-- `OpenidConfig`: `issuer` and `jwks_uri`, keeping upstream's `AnyHttpUrl`. `jwks_uri`
-  arrives inside a remote document that is then fetched, so a field validator additionally
-  pins its scheme to match the domain's `use_https` setting. `extra="allow"`.
+- `OpenidConfig`: `issuer` and `jwks_uri`. Only `jwks_uri` keeps upstream's `AnyHttpUrl`.
+  **`issuer` is a plain `str`, deliberately not `AnyHttpUrl`**, validated by `urlparse`
+  for an http or https scheme and a host and then returned byte-for-byte. Pydantic's URL
+  type normalizes, and one of its normalizations appends a trailing slash to a bare-host
+  URL, so a provider publishing `https://auth.example.com` as its issuer would be stored
+  as `https://auth.example.com/` and would then fail the exact string comparison against
+  the `iss` claim in every token it mints. That is the mechanism Decision 3 depends on:
+  `verify_issuer=True` is only safe to default on if the value it compares survives
+  unmodified. Anyone "fixing" this field back to `AnyHttpUrl` breaks real providers, and
+  the failure looks like a provider problem rather than a library one.
+  `jwks_uri` arrives inside a remote document that is then fetched, so a field validator
+  pins its scheme. It **defaults to requiring https** and relaxes only when the validation
+  context says otherwise: `openid_config_loader.py` passes `require_https=False` for a
+  domain configured with `use_https=False`, and a caller that forgets the context gets the
+  strict behavior rather than a silently accepted plaintext JWKS endpoint. Failing closed
+  is the point. `extra="allow"`.
 - `DomainConfig`: upstream's `domain`, `audience`, `ignore_audience`, `algorithm`,
   `use_https`, `match_keys` and `permission_extractor`, plus the new
-  `verify_issuer: bool = True`.
+  `verify_issuer: bool = True`. Two fields change from upstream. **`domain` is required**,
+  with no default, and additionally rejects a whitespace-only value. Upstream defaults it
+  to `""`, which builds the discovery URL `https:///.well-known/openid-configuration` and
+  fails at request time with a message naming neither the domain nor the configuration. It
+  has to be required rather than merely validated, because pydantic v2 does not run
+  validators over field defaults: with a default present, `DomainConfig()` would still
+  construct. `Armasec.__init__` checks for the keyword before constructing, so `Armasec()`
+  with no domain still raises its own 422 rather than a `ValidationError`. **`algorithm` is
+  checked against `SUPPORTED_ALGORITHMS` at construction**, so a typo fails where it was
+  written instead of configuring a route that refuses every token it is ever shown with a
+  message about the token.
 
 `PermissionMode` becomes `class PermissionMode(str, Enum)` with `ALL = "ALL"` and
 `SOME = "SOME"`, preserving upstream's `AutoNameEnum` string values. `auto-name-enum` is
@@ -336,9 +435,20 @@ invokes `do_except(DoExceptParams(final_message, err, trace))` when supplied.
 `utilities.log_error` ports unchanged.
 
 Subclasses keep upstream's status codes: `AuthenticationError` 401, `AuthorizationError`
-403, `PayloadMappingError` 500. New `jwt.py` errors (`ExpiredSignatureError`,
-`ImmatureSignatureError`, `InvalidAudienceError`, `InvalidIssuerError`,
-`InvalidSignatureError`, `InvalidAlgorithmError`) all subclass `AuthenticationError`.
+403, `PayloadMappingError` 500. The eight `jwt.py` errors (`InvalidTokenError`,
+`InvalidSignatureError`, `InvalidAlgorithmError`, `InvalidKeyError`,
+`ExpiredSignatureError`, `ImmatureSignatureError`, `InvalidAudienceError`,
+`InvalidIssuerError`) all subclass `AuthenticationError`, so every way a token can fail
+verification is a 401. `InvalidTokenError` covers the malformed shapes, and
+`InvalidKeyError` covers a JWK missing a member its key type requires, which is a 401 whose
+fault usually lies with the provider's JWKS rather than with the token.
+
+`exceptions.py` adds one more: **`UnknownKeyIdError`, an `AuthenticationError` subclass
+raised specifically to be caught.** It carries the same 401 as its parent, so nothing
+changes for a client if it reaches the handler unhandled, but `TokenSecurity` catches it to
+decide whether a JWKS refresh is worth attempting. It is public because a consumer writing
+its own `except` clauses around the decoder will meet it. See `token_decoder.py` and
+`token_security.py` below for the flow it drives.
 
 ### `openid_config_loader.py`
 
@@ -347,9 +457,9 @@ properties. Three additions:
 
 **Process-wide cache.** A module-level `dict` keyed by `(domain, use_https)` returns a
 shared loader via `OpenidConfigLoader.get(domain, use_https, debug_logger)`, guarded by a
-module-level `threading.Lock`. Without this, an app with ten distinct `lockdown()` scope
-combinations against one domain performs ten independent loads, or twenty HTTP requests.
-With it, two.
+module-level `threading.Lock`. Without this, an app with four distinct `lockdown()` scope
+combinations against one domain performs four independent loads, or eight HTTP requests.
+With it, two, and it stays two however many scope sets are added.
 
 **Per-loader fetch lock.** Each loader holds its own `threading.Lock` around the cold
 config and JWKS fetches. Upstream has no lock, so N concurrent first requests to the same
@@ -367,6 +477,15 @@ tracked with `time.monotonic()`. Upstream caches the JWKS forever, so a provider
 rotation 401s every request until the process restarts. The rate limit prevents a flood of
 unknown-`kid` tokens from turning into a flood of outbound requests.
 
+**The clock is stamped in a `finally`, so it advances even when the fetch fails.** This is
+the only part of the rate limit that matters for the case it exists to defend. `kid` comes
+from the token's unverified header, so it is attacker-chosen: an unauthenticated caller can
+present an endless stream of tokens with distinct unknown `kid` values. If the clock were
+stamped only on success, a provider returning errors would leave it un-advanced and every
+one of those tokens would produce another outbound request, turning a provider outage into
+an amplification vector aimed at the provider. Advancing on the failure path costs one
+delayed recovery at worst, bounded by `JWKS_REFRESH_INTERVAL`.
+
 `clear_cache()` is exported for tests, and the `mock_openid_server` fixture calls it
 automatically. A process-wide cache is a test-isolation hazard and this is the mitigation.
 
@@ -383,9 +502,22 @@ jwks_refresher: Callable[[], JWKs] | None = None
 `_load_manager` passes `loader.refresh_jwks`. The first positional argument stays `JWKs`,
 so existing construction sites are unaffected.
 
-`get_decode_key` searches `jwks.keys` for a matching `kid` and, on a miss, calls
-`jwks_refresher()` when one is configured and searches the refreshed set once more before
-raising. `decode` calls `armasec_lite.jwt.decode` in place of `jose.jwt.decode`, applies
+**`get_decode_key` never refreshes. It reports.** It searches `jwks.keys` for a matching
+`kid` and, on a miss, raises `UnknownKeyIdError` when a `jwks_refresher` is configured, or
+a plain `AuthenticationError` when none is, since without a refresher there is nothing a
+caller could do about it. It does not call the refresher itself, and this is the whole
+point of the design: `get_decode_key` runs on the event loop, `kid` comes from the token's
+unverified header, and a blocking refetch here would be a whole-process stall for the
+length of the fetch timeout that any unauthenticated caller could trigger at will.
+
+The refresh is a separate public method, `refresh_keys()`, which replaces the key set with
+a freshly fetched one and is a no-op when no `jwks_refresher` was configured, so a caller
+can invoke it unconditionally after an unknown `kid`. It does blocking network work and
+must be run off the event loop. `TokenSecurity` is the caller and does exactly that, in an
+executor; see `token_security.py`. A refetch failure raises out of `refresh_keys` and the
+current key set is left untouched.
+
+`decode` calls `armasec_lite.jwt.decode` in place of `jose.jwt.decode`, applies
 `permission_extractor` when configured, and builds the `TokenPayload`.
 `extract_keycloak_permissions` is carried over verbatim.
 
@@ -396,6 +528,15 @@ in favor of a two-line `partition(" ")`, keeping identical behavior: require the
 require both a scheme and a token, require the scheme to be `bearer` case-insensitively.
 `extract_token_payload` passes `verify_issuer` and the openid config's `issuer` through to
 the decoder alongside `audience`.
+
+`__init__` gains `verify_issuer: bool = True` to carry Decision 3 down from `DomainConfig`.
+It also still accepts upstream's `decode_options_override`, and stores it, but **never
+consults it**. The decoder holds its own options and those are the ones that take effect.
+The argument is kept only so an upstream construction site does not become a `TypeError`,
+and it is called out here because a silently inert security-relevant argument is a trap:
+someone passing `decode_options_override={"verify_aud": False}` here would get audience
+checks anyway, with nothing to indicate the setting was ignored. Options belong on
+`TokenDecoder`.
 
 ### `token_security.py`
 
@@ -411,16 +552,52 @@ await loop.run_in_executor(None, self._load_all_managers)
 Upstream calls sync `httpx.get` from inside `async def __call__`, blocking the event loop
 on every cold load. This fixes that.
 
-The one other blocking path gets the same treatment. `TokenDecoder.get_decode_key` reports
-an unknown `kid` by raising `UnknownKeyIdError` instead of refetching the JWKS itself, and
-`__call__` catches it and drives `_refresh_and_retry` through the executor, once per
-request. `kid` comes from the token's unverified header, so an inline refetch would be an
-attacker-triggered whole-process stall for the length of the fetch timeout.
+The one other blocking path gets the same treatment, and it is the reason
+`TokenDecoder.get_decode_key` reports an unknown `kid` rather than recovering from it.
+`__call__` catches `UnknownKeyIdError` and drives `_refresh_and_retry` through the
+executor, **once per request**. `_refresh_and_retry` calls `refresh_keys()` on every
+manager's decoder, not only the ones that reported a miss: they all failed to decode the
+token, so
+none of their key sets is known good, and each loader's own rate limit bounds the outbound
+traffic at one refetch per domain per `JWKS_REFRESH_INTERVAL` however often this runs. It
+then retries the extraction exactly once. **The retry is not itself retried.** A second
+`UnknownKeyIdError` propagates as an ordinary 401, so an attacker-chosen `kid` can never
+drive a loop.
 
-`_load_all_managers` builds its list locally and assigns it in one statement. Concurrent
-first requests all pass the empty-cache check in `__call__`, so appending in place would
-leave N copies of every manager and would expose a half-built list to a concurrent
-request.
+`_extract_token_payload_from_manager` decides which error the client sees, and the decision
+is what makes the retry reachable at all when more than one domain is configured. It walks
+the managers, and:
+
+- an `UnknownKeyIdError` from any manager is remembered and wins over everything else, so a
+  configuration where domain A cannot decode the token for an ordinary reason and domain B
+  reports an unknown `kid` still reaches the refresh path rather than 401ing on A's error;
+- any other decode error is remembered as the last real failure rather than discarded, and
+  re-raised at the end so its own status and detail reach the client. A token that fails
+  with a `PayloadMappingError` (500) should not be reported as a generic "no matching JWK";
+- a `match_keys` refusal deliberately bypasses all of this. `_check_match_keys` runs
+  outside the loop's `try`, after a manager has successfully decoded the token, so its
+  `AuthorizationError` (403) propagates immediately instead of being demoted to a 401 by
+  the fallthrough. The token verified; it simply is not for this caller, and those are
+  different answers.
+
+`_check_match_keys` compares booleans by identity, not equality. `1 == True` in Python, so
+a token carrying `1` where a `match_keys` entry requires `True` would otherwise pass an
+authorization check it should fail. Strings and numbers compare by equality, and anything
+else is treated as a collection and checked for intersection.
+
+`_load_all_managers` skips a domain whose manager fails to build rather than failing the
+whole load, so one unreachable or misconfigured provider does not take down authentication
+against every other configured domain. It errors only when every domain failed. The
+consequence is worth stating because it is not obvious: managers are built once and cached
+for the process lifetime, so **a provider that is down at first-request time stays out of
+rotation until the process restarts**, even after it recovers. That is the deliberate trade
+against the alternative, which is retrying the cold load on every request and handing an
+unauthenticated caller a way to force it.
+
+`_load_all_managers` also builds its list locally and assigns it in one statement.
+Concurrent first requests all pass the empty-cache check in `__call__`, so appending in
+place would leave N copies of every manager and would expose a half-built list to a
+concurrent request.
 
 `ManagerConfig` becomes a plain dataclass. The rest of the class body, including
 `match_keys` handling, `PermissionMode` evaluation, and the `HTTPException` translation
@@ -518,9 +695,24 @@ reason PyJWT is a development dependency despite the goal of removing such depen
 from the runtime.
 
 **Concurrency tests** for the new cache: N concurrent cold requests produce exactly one
-config fetch and one JWKS fetch; ten distinct `lockdown()` scope sets against one domain
+config fetch and one JWKS fetch; four distinct `lockdown()` scope sets against one domain
 produce two HTTP calls total; a rotated `kid` triggers exactly one refetch and a second
-unknown `kid` within the interval triggers none.
+unknown `kid` within the interval triggers none. Four is what the end-to-end test actually
+exercises, and the property it demonstrates is that the count is independent of the number
+of scope sets, not that it holds at some particular number. Every place this claim is
+repeated says four for that reason: a number that appears in prose but not in a test reads
+as tested when it is not.
+
+**Guard tests.** Two claims this spec makes are enforced by tests rather than by
+convention, and the tests are the contract. `tests/unit/test_packaging.py` asserts the
+runtime dependency list is exactly the three declared here and AST-walks every module under
+`armasec_lite/` for banned imports (`jose`, `buzz`, `snick`, `auto_name_enum`, `pluggy`,
+`respx`, `httpx`), so "three dependencies" is a checked invariant and not a claim that
+decays the first time someone adds an import. `.github/workflows/deploy-docs.yml` similarly
+cross-checks the module list in `docusaurus.config.ts` against the number of generated
+reference pages, so the documented module list cannot silently drift from what the site
+publishes. Deleting either guard deletes the enforcement of something this spec asserts as
+fact.
 
 ## Differences from upstream
 
@@ -544,6 +736,7 @@ entirely. The table below is what remains after it.
 | The pytest fixtures live behind the `[test]` extra | A ported test suite cannot import the fixtures from a plain install, because upstream forced `pytest` into every install and this does not | Depend on `armasec-lite[test]` |
 | The OIDC loader cache is process-wide | Tests that expect per-instance provider state now share it | `openid_config_loader.clear_cache()`, or the `mock_openid_server` fixture, which calls it automatically |
 | The CLI is not included | `armasec` console script is gone | Out of scope; see Non-goals |
+| `exp`, `nbf` and `iat` must be finite numbers, and JSON `Infinity`/`NaN` are refused outright | A token carrying `"exp": 1e400`, or a payload containing the non-standard JSON constants, was accepted upstream and is now a 401 | Nothing, unless a provider is minting such tokens, in which case fix the provider: an `exp` of infinity is a token that never expires |
 
 **Requires no action, listed so the API diff is complete:**
 
@@ -555,6 +748,8 @@ entirely. The table below is what remains after it.
 | `handle_errors` re-raises an `ArmasecError` subclass unchanged instead of re-wrapping it | Deliberate, and a deviation from py-buzz and from this spec's own prose above. Re-wrapping would let the `PayloadMappingError` block in `TokenDecoder.decode` swallow a genuine `AuthenticationError` and turn a 401 into a 500. The outermost handler still maps anything that is not an `ArmasecError` to the wrapper type, so the wrapping contract holds for every error that is not already ours |
 | `DomainConfig.domain` is required and must be non-empty, where upstream defaults it to `""` | An empty domain builds the discovery URL `https:///.well-known/openid-configuration` and fails at request time with an error that names neither the domain nor the configuration. The only caller that relied on the empty default, `Armasec.__init__`, checks for the keyword before constructing, so `Armasec()` still raises its own 422 |
 | `DomainConfig.algorithm` is checked against the supported set at construction | Strictly earlier failure. A typo previously configured a route that refused every token it was ever shown, with a message about the token |
+| `UnknownKeyIdError` is a new public exception type | An `AuthenticationError` subclass carrying the same 401. Nothing that caught `AuthenticationError` stops catching it, and it exists so `TokenSecurity` can tell "no key matched" apart from every other 401 and refresh the JWKS in response |
+| The RFC 7515 unsecured JWS shape returns `InvalidAlgorithmError` | Still a 401, still an `AuthenticationError` subclass. The status is unchanged; only the error type and message are more specific, which is what makes an `alg: none` attempt legible in a log rather than indistinguishable from a truncated token |
 
 Upstream armasec **3.x** is the migration source. Migrating from 2.x is out of scope and
 untested; a 2.x consumer should upgrade to 3.x first and confirm their application works.
@@ -636,28 +831,90 @@ inheriting them from a transitive dependency. The matrix presents it that way.
 ## Integration comparison harness
 
 Two real FastAPI services under Docker Compose, one on upstream `armasec==3.0.3` and one
-on `armasec-lite`, driven by a load generator. Everything about the request model is
-measured from the outside, over the network, against running servers.
+on `armasec-lite`, authenticating against **a real Keycloak** and driven by a load
+generator. Everything about the request model is measured from the outside, over the
+network, against running servers.
+
+An earlier draft of this section specified a mock OIDC provider written for the harness.
+That is superseded. A comparison against a provider we wrote ourselves proves less than a
+comparison against the provider these libraries actually face, and Keycloak is what
+`vantage-api`, `vantage-mcp-infra` and `slurm-mcp` authenticate against, so the harness
+exercises the real migration path rather than an approximation of it.
 
 ```
-tests/
-  unit/                     the ported suite, the attack suite, the unit tests
-  integration/
-    docker-compose.yaml
-    Dockerfile.app          one Dockerfile, parameterized by build arg
-    Dockerfile.bench
-    app/
-      main.py               ONE app module, import selected by env var
-    oidc/
-      server.py             OIDC provider: config, jwks, mint, rotate, stats
-    bench/
-      run.py                scenario driver, writes results JSON
-      scenarios.py          the scenario definitions
-      report.py             aggregation and summary printing
-    results/                committed JSON
-    test_parity.py          pytest: identical responses from both services
-    conftest.py
+legacy_comparison_compose/
+  docker-compose.yaml
+  Dockerfile.app            one image, parameterized by build arg
+  Dockerfile.bench
+  realm/
+    armasec-realm.json      imported at Keycloak start
+  app/
+    main.py                 ONE app module, import selected by env var
+  proxy/
+    main.py                 counting and latency-injecting reverse proxy
+  bench/
+    run.py                  scenario driver
+    scenarios.py
+    report.py
+  results/                  committed JSON
+  test_parity.py            pytest: identical responses from both services
 ```
+
+| Service | What it is |
+| --- | --- |
+| `keycloak` | `quay.io/keycloak/keycloak`, `start-dev --import-realm`, realm imported from `realm/armasec-realm.json` |
+| `oidc-proxy` | A small asyncio reverse proxy in front of Keycloak. Counts requests per path, injects a configurable delay, and exposes `/__stats`, `/__latency` and `/__reset` |
+| `app-legacy` | FastAPI on upstream `armasec==3.0.3` |
+| `app-lite` | FastAPI on `armasec-lite` |
+| `bench` | The load generator and scenario driver |
+
+### Why a proxy sits in front of Keycloak
+
+Three things the scenarios need that Keycloak cannot provide directly, and one trap.
+
+**Exact request counting.** The headline caching claim is that N distinct `lockdown()`
+scope sets against one domain cost 2 HTTP calls rather than 2N. That has to be counted at
+the wire, not inferred. Keycloak has no per-path request counter, so the proxy keeps one.
+
+**Injectable latency.** S5 sweeps provider latency to show how cold-start cost scales with
+it, and S4's event-loop blocking is only visible when the provider is slow enough to
+matter. A real Keycloak on the same host answers in single-digit milliseconds, which would
+hide the effect being measured. The proxy adds a controlled delay.
+
+**Fault injection.** The rate-limit fix depends on a failing provider still advancing the
+refresh clock. The proxy can return 500s or hang on demand, which Keycloak will not do for
+us.
+
+**The trap: `KC_HOSTNAME` must point at the proxy.** Keycloak's discovery document
+advertises absolute URLs, and its `jwks_uri` is one of them. Left at its default, Keycloak
+would advertise its own address, the application would fetch the JWKS directly from
+Keycloak, and every JWKS request would bypass the proxy and go uncounted. Setting
+`KC_HOSTNAME` to the proxy's address makes discovery advertise proxy URLs, so both fetches
+traverse the proxy. It also keeps `issuer` consistent between the discovery document and
+the `iss` claim in minted tokens, which matters because `armasec-lite` verifies the issuer
+by exact string equality and upstream does not.
+
+That last point is worth stating plainly: **the harness is a live test of the most
+consequential deliberate behavior difference between the two libraries.** A Keycloak behind
+a proxy is exactly the deployment shape where issuer mismatches occur in practice.
+
+### Realm
+
+`realm/armasec-realm.json` defines realm `armasec` with:
+
+- A confidential client `armasec-api` with service accounts and direct access grants
+  enabled, so the bench can mint tokens by both client credentials and password grant.
+- Client roles `read:stuff`, `write:stuff` and `admin:stuff`, assigned to a service account
+  and to a test user, so scope checks have something real to check.
+- An **audience mapper** putting `armasec-api` into `aud`. Keycloak's default audience is
+  `account`, which would make the audience check vacuous.
+- A second client `other-api` with its own audience, so a scenario can prove that a token
+  minted for one API is rejected by the other.
+
+Keycloak places client roles under `resource_access.<client>.roles`, not in a top-level
+`permissions` claim, so both applications configure
+`permission_extractor=extract_keycloak_permissions`. That is the realistic configuration
+for a Keycloak deployment and it exercises a feature both libraries implement.
 
 ### Fairness
 
@@ -684,46 +941,39 @@ the auth library. The harness enforces that:
   harness exists to measure. This is the coordinated-omission problem and avoiding it is
   the difference between a meaningful latency number and a flattering one.
 
-### The OIDC service
-
-A small real HTTP server, not a mock, holding a fixed RSA keypair. Endpoints:
-
-| Endpoint | Purpose |
-| --- | --- |
-| `/.well-known/openid-configuration` | standard discovery document |
-| `/jwks.json` | current JWKS |
-| `/__mint` | sign a token with caller-supplied claims, so the load generator needs no key material |
-| `/__rotate` | swap in a new `kid`, for the rotation scenario |
-| `/__stats` | request counts per path, for exact call counting |
-| `/__latency` | set the injected per-response delay at runtime |
-
-Injected latency models a real provider. Request counts come from this service's own
-counters, so the OIDC-call comparison is counted, never asserted.
-
 ### Scenarios
 
 | ID | Scenario | Measures |
 | --- | --- | --- |
-| S1 | Cold start, one route, concurrency sweep at 1, 2, 4, 8, 16, 32, 64 | p50, p95, max time to first response |
-| S2 | Cold start, N distinct `lockdown()` scope sets at N of 1, 5, 10, 20 | OIDC requests observed, wall time until all routes warm |
+| S1 | Cold start, one route, concurrency 1 to 64 | p50, p95, max time to first response |
+| S2 | Cold start, N distinct `lockdown()` scope sets, N in 1, 5, 10, 20 | OIDC requests counted at the proxy, wall time until all routes warm |
 | S3 | Warm steady state, sustained open-loop load | requests per second, latency percentiles |
 | S4 | Unauthenticated `/health` hammered *during* a cold auth load | `/health` latency, which exposes event-loop blocking entirely from outside the process |
 | S5 | Provider latency sweep at 0, 50, 200, 500 ms | cold-start sensitivity to provider latency |
-| S6 | JWKS key rotation mid-run via `/__rotate` | error count after rotation, time to recovery |
-| S7 | Malformed, expired, wrong-audience, wrong-issuer, insufficient-scope tokens | HTTP status code from each service |
+| S6 | Keycloak realm key rotation mid-run | error count after rotation, time to recovery |
+| S7 | Malformed, expired, wrong-audience, wrong-issuer, insufficient-scope tokens | HTTP status from each service |
+| S8 | Provider returning 500s while unknown-`kid` tokens arrive | outbound requests counted at the proxy |
 
-S4 is the central result. Upstream calls synchronous `httpx.get` from inside
+S4 remains the central result. Upstream calls synchronous `httpx.get` from inside
 `async def __call__`, so during a cold load the event loop cannot serve anything, including
 routes that have no authentication at all. A client watching `/health` sees that directly.
 No instrumentation, no profiler, no claim the reader has to take on faith.
 
 S6 is a feature difference rather than a performance one and is labeled as such in the
-docs. Upstream caches the JWKS for the process lifetime, so after a rotation it should
-return 401 until restart; `armasec-lite` should recover within its refetch interval.
+docs. It now rotates **real Keycloak realm keys** through the admin API rather than
+swapping a fixture, which is a materially stronger demonstration: upstream caches the JWKS
+for the process lifetime and should 401 until restarted, while `armasec-lite` should
+recover within its refetch interval.
 
-S7 is a correctness scenario, not a performance one. Its assertion is **parity**: both
-services must return the same status code for the same request. Any divergence other than
-the documented `verify_issuer` default is a bug in `armasec-lite`.
+S7 asserts **parity**: both services must return the same status for the same request,
+except for the documented `verify_issuer` difference, which gets its own explicit case. Any
+other divergence is a bug in `armasec-lite`.
+
+S8 exists because the final review found a real vulnerability there: a failing provider
+used to leave the refresh clock un-advanced, so every unknown-`kid` token produced another
+outbound request, and `kid` is attacker-chosen. The scenario asserts the outbound count
+stays bounded while the provider is failing, which is the property the fix introduced (see
+`openid_config_loader.py` above) and which nothing outside the unit tests currently proves.
 
 ### Parity tests
 
@@ -740,8 +990,9 @@ reach Docker. Integration tests run only when asked for.
 
 Written to `legacy_comparison_compose/results/*.json` and committed. Each file records UTC
 timestamp, hostname, CPU model, kernel, Docker version, container resource limits,
-repetition count, and the resolved versions of both libraries. `benchmarks/bench/charts.py`
-reads from both `benchmarks/results/` and `legacy_comparison_compose/results/`.
+repetition count, the Keycloak image digest, and the resolved versions of both libraries.
+`benchmarks/bench/charts.py` reads from both `benchmarks/results/` and
+`legacy_comparison_compose/results/`.
 
 Numbers from this harness describe one machine running Docker, and the docs say so. The
 ratios between the two arms are the meaningful part, not the absolute milliseconds.
@@ -750,9 +1001,13 @@ ratios between the two arms are the meaningful part, not the absolute millisecon
 
 `docusaurus/`, seeded from `vantage-mcp-infra/docusaurus` so it matches the other Vantage
 spoke sites: `@vantagecompute/docusaurus-theme`, `@docusaurus/theme-mermaid`,
-`docusaurus-plugin-llms`, and `@vantagecompute/docusaurus-plugin-pydoc` added as a git
-submodule at `docusaurus/vendor/docusaurus-plugin-pydoc`, the same arrangement that repo
-uses.
+`docusaurus-plugin-llms`, and `@vantagecompute/docusaurus-plugin-pydoc` as an ordinary npm
+dependency, pinned `^0.1.1` in `docusaurus/package.json`. An earlier draft vendored the
+pydoc plugin as a git submodule under `docusaurus/vendor/`, matching what
+`vantage-mcp-infra` did at the time. It is published to npm now, so there is no submodule,
+no `.gitmodules`, and nothing for a CI checkout to authenticate against. The version pin is
+load-bearing: 0.1.1 is the release that renders Google-style `Args:`, `Returns:` and
+`Raises:` sections as lists rather than as run-on paragraphs.
 
 Config changes from the seed: title `armasec-lite`, `baseUrl`
 `/developer/armasec-lite/`, `organizationName`/`projectName` retargeted, a single pydoc
@@ -774,7 +1029,7 @@ docs/
     threading-model.md            why the executor hop exists
   security/
     index.md
-    jwt-verification.md           the six-step verification order and its rationale
+    jwt-verification.md           the verification order and its rationale
     threat-model.md               what is defended, what is out of scope
   benchmarks.md                   the charts
   comparison.md                   the legacy comparison harness and its scenarios
@@ -783,9 +1038,10 @@ docs/
   contributing.md
 ```
 
-`index.md` states the project's purpose, the dependency reduction table, and the three
-behavior differences from upstream, then links onward. It leads with what the project is,
-not with the benchmark numbers.
+`index.md` states the project's purpose, the dependency reduction table, and the behavior
+differences from upstream that require action from an integrator, then links onward to the
+migration page for the complete list. It leads with what the project is, not with the
+benchmark numbers.
 
 ### Charts
 
@@ -814,6 +1070,7 @@ Charts:
 | `/health` latency during cold auth load | Line over time | `legacy_comparison_compose/results/s4_loop_block.json` |
 | Cold start versus provider latency | Line | `legacy_comparison_compose/results/s5_provider_latency.json` |
 | Errors and recovery after key rotation | Line over time | `legacy_comparison_compose/results/s6_rotation.json` |
+| Outbound requests while the provider is failing | Line over time | `legacy_comparison_compose/results/s8_failing_provider.json` |
 | Security posture by attack vector | Heatmap | `benchmarks/results/security_matrix.json` |
 
 The S4 chart is the headline. Plotting unauthenticated `/health` latency on a time axis,
@@ -840,19 +1097,28 @@ repositories.
 | Recipe | Action |
 | --- | --- |
 | `just test` | unit suite only, no Docker |
-| `just lint` | `ruff` and `mypy` |
+| `just test-cov` | the unit suite with coverage |
+| `just lint` | `ruff check`, `ruff format --check` and `mypy` |
 | `just compare-legacy` | the full legacy comparison, described below |
 | `just bench` | the non-Docker microbenchmarks in `benchmarks/` |
 | `just charts` | regenerate Plotly specs from committed results |
-| `just docs` | build the Docusaurus site |
-| `just docs-serve` | run the docs site locally |
+| `just docs-build` | build the Docusaurus site |
+| `just docs-dev` | run the docs site with hot reload |
+| `just docs-serve` | serve an already-built site locally |
+| `just docs-sdk` | regenerate the API reference from docstrings |
+| `just docs-diagrams` | render the Mermaid diagrams |
+| `just docs-verify` | `docs-build` and `docs-diagrams` together |
+
+`bench` and `charts` are the two recipes this spec calls for that the justfile does not
+carry yet; everything else in the table exists.
 
 `just compare-legacy` is the single command that produces the comparison:
 
-1. Build both application images and the OIDC and bench images.
+1. Build both application images and the proxy and bench images, and pull the pinned
+   Keycloak image.
 2. Record image sizes into the footprint result.
-3. `docker compose up -d`, wait for all health checks.
-4. Run scenarios S1 through S7, interleaving legacy and lite arms, restarting app
+3. `docker compose up -d`, wait for all health checks, including Keycloak's realm import.
+4. Run scenarios S1 through S8, interleaving legacy and lite arms, restarting app
    containers between cold-start repetitions.
 5. Run `test_parity.py` against the live stack.
 6. Write result JSON into `legacy_comparison_compose/results/`.
@@ -894,10 +1160,13 @@ repository deploys nothing.
 
 ### Deploy workflow
 
-`.github/workflows/deploy-docs.yml`, ported from `vantage-mcp-infra`. Triggers on `v*`
-tags and `workflow_dispatch`. Checks out submodules over HTTPS (the `.gitmodules` entry
-records an SSH URL that a runner has no key for), installs Node 24, builds the Docusaurus
-site, assumes `secrets.DOCS_SPOKE_ROLE_ARN` via OIDC, syncs to
+`.github/workflows/deploy-docs.yml`, ported from `vantage-mcp-infra`. Triggers on
+`v[0-9]+.[0-9]+.[0-9]+` tags and `workflow_dispatch`. The pattern is deliberately not
+`v*`: GitHub tag filters are glob-like rather than regular expressions, and `v*` also
+matched pre-releases, so a release candidate silently replaced the published site. It
+installs Node 24 and a Python 3.12 interpreter (the pydoc plugin parses the source with
+`ast` and never imports it, so it needs no virtualenv and no `uv sync`), builds the
+Docusaurus site, assumes `secrets.DOCS_SPOKE_ROLE_ARN` via OIDC, syncs to
 `s3://$DOCS_BUCKET/developer/armasec-lite/` with `--delete`, and invalidates
 `/developer/armasec-lite/*`.
 
@@ -918,3 +1187,54 @@ a `pytest` run: totals by outcome, per-module coverage, and the full list of att
 test names with their outcomes, so the security matrix chart can be traced to named tests.
 Generated content is written into a marked region of the page so the surrounding prose is
 hand-maintained. The docs build regenerates it, so it cannot go stale silently.
+
+## Release and CI
+
+### `ci.yml`
+
+Runs on every pull request and every push to `main`, with `cancel-in-progress` concurrency
+so a superseded push does not hold a runner. It installs `uv` at a pinned version, syncs
+all dependency groups, installs `just` from the official installer (the runner image ships
+none), and runs `just lint` and `just test`. It deliberately calls the justfile rather than
+`ruff` and `pytest` directly, so a contributor running the same two commands locally runs
+exactly what CI runs.
+
+### `release.yml`
+
+Publishing to PyPI uses **trusted publishing over OIDC**, so there is no API token stored
+in this repository to leak or rotate. It requires one-time setup on PyPI: a trusted
+publisher for the project pointing at `vantagecompute/armasec-lite`, workflow
+`release.yml`, environment `pypi`. The publish and release-creation jobs are gated on the
+ref being a tag, so a `workflow_dispatch` run exercises the whole build and smoke test
+without burning a version number.
+
+The package is pure Python with no compiled extensions, so one universal `py3-none-any`
+wheel covers every platform. There is no build matrix.
+
+Four parts of the workflow are load-bearing and easy to break silently:
+
+**The PEP 440 gate.** The tag's version is checked against a practical subset of the PEP
+440 grammar before anything is built. A malformed version otherwise fails at upload time,
+after the tag exists and after the docs deploy may already have run. If a legitimately
+exotic version is ever rejected, relax the regex rather than work around it.
+
+**The `sed` that rewrites `version` in `pyproject.toml`.** `armasec_lite.__version__` is
+`importlib.metadata.version(...)`, read at import time, so the version lives in exactly one
+place and only `pyproject.toml` needs rewriting. That coupling is the thing to preserve: a
+future edit that hardcodes `__version__` in the source, or that moves or reformats the
+`version` line in `pyproject.toml`, breaks the `sed` or the assertion downstream of it, and
+does so without any local symptom.
+
+**The clean-venv wheel smoke test.** The built wheel is installed into a throwaway `uv
+venv`, not tested in the source tree, and the installed package is asked for its
+`__version__` and for every name in `__all__`. A package can pass its own test suite and
+still be unusable once built, if a module is missing from the wheel or a re-export does not
+resolve. Testing the source tree cannot catch that; only installing the artifact can.
+
+**The `pytest11` entry-point check.** The same clean venv installs `pytest` and asserts
+that `armasec_lite.pytest_extension` appears in the `pytest11` entry-point group. That
+entry point is resolved by pytest at startup, so a broken one breaks every consumer's test
+run rather than failing quietly in ours.
+
+On a tag, the workflow then publishes to PyPI under the `pypi` environment with
+`id-token: write`, and creates a GitHub release carrying the built distributions.

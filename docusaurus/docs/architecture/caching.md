@@ -7,9 +7,10 @@ sidebar_position: 2
 
 `OpenidConfigLoader.get(domain, use_https, debug_logger)` returns a shared loader from a
 module-level `dict` keyed by `(domain, use_https)`, guarded by a module-level
-`threading.Lock`. Without this, an app with ten distinct `lockdown()` scope combinations
-against one domain would perform ten independent loads, or twenty HTTP requests. With it,
-two: one for the OIDC configuration document, one for the JWKS.
+`threading.Lock`. Without this, an app with four distinct `lockdown()` scope combinations
+against one domain would perform four independent loads, or eight HTTP requests. With it,
+two: one for the OIDC configuration document, one for the JWKS, however many scope sets
+are added.
 
 Because the cache is process-wide rather than private to each `Armasec` instance, it is
 also a test-isolation hazard: two tests constructing an `Armasec` against the same domain
