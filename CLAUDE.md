@@ -61,11 +61,23 @@ description column.**
 The class docstring's `Attributes:` section is the only place a reader learns what a field
 means. Every class with public attributes needs one, and it must cover every attribute.
 
-**4. `__init__` and `__call__` are rendered when they carry a docstring, and skipped
-otherwise.** Everything else beginning with an underscore is private and never rendered.
+**4. `__init__` and `__call__` are always rendered. Everything else beginning with an
+underscore is private and never rendered.**
+
+An earlier version of this file said these two render only when they carry a docstring.
+That is wrong, and the difference matters: an undocumented `__init__` produces an **empty
+section** on the page rather than being omitted. So a missing docstring there is visible to
+readers as a gap, not hidden.
 
 `TokenSecurity.__call__` is the most important method in the library. Methods like it earn
 a substantial docstring, not a one-liner.
+
+**5. Use `###` and below for any heading inside a docstring, never `##`.**
+
+The generator emits docstrings verbatim into the page beneath its own `## Overview`
+heading. An `##` in your prose escapes that section and collides with the generator's own
+`## Constants` and `## Classes` headings, producing duplicate anchors and a broken table of
+contents. This was a real defect found by building the site and reading the output.
 
 ### Module docstrings
 
@@ -167,9 +179,30 @@ print(f'{len(line):3d}  $f  {line}')
 "
 done
 
-# Generate and read the reference. It is the actual deliverable.
-cd docusaurus && npm run build && ls docs/api-reference/
+# Generate and read the reference. It is the actual deliverable, and building it is the
+# only way to catch heading collisions and layout problems. `git worktree add` does NOT
+# populate submodules, so the pydoc plugin will be missing in a fresh worktree and the
+# build will fail until you init it.
+git submodule update --init --recursive
+cd docusaurus && npm ci && npm run build && ls docs/api-reference/
 ```
+
+**Read the built output, do not just check that the build passed.** Two defects in this
+repository's docs were found only by reading generated pages: three module descriptions
+silently truncated in the index table, and `##` headings in docstrings colliding with the
+generator's own section headings.
+
+### Known limitation
+
+`Args:`, `Returns:` and `Raises:` blocks render as single run-on paragraphs, because the
+renderer emits docstring bodies verbatim into Markdown and Markdown collapses the newlines.
+The content is correct; the formatting is poor, and it is worst on long `Raises:` sections.
+
+Do not work around this by reformatting docstrings into Markdown lists: they would then read
+badly in an editor, in `help()`, and in every IDE tooltip, which is where most people
+actually meet them. The fix belongs in `renderer.js`, which lives in the
+`vantagecompute/docusaurus-plugin-pydoc` repository, vendored here as a submodule. Fixing it
+there improves every Vantage project using the plugin.
 
 ## Testing
 
