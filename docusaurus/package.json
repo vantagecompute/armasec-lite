@@ -13,14 +13,14 @@
     "typecheck": "tsc",
     "write-translations": "docusaurus write-translations",
     "write-heading-ids": "docusaurus write-heading-ids",
-    "gen-sdk-docs": "node node_modules/@vantagecompute/docusaurus-plugin-pydoc/src/generate.js --project-root .. --output-dir ./docs/api-reference --modules armasec_lite.armasec,armasec_lite.token_security,armasec_lite.token_manager,armasec_lite.token_decoder,armasec_lite.token_payload,armasec_lite.openid_config_loader,armasec_lite.schemas,armasec_lite.jwt,armasec_lite.http,armasec_lite.exceptions,armasec_lite.utilities,armasec_lite.pluggable"
+    "gen-sdk-docs": "node node_modules/@vantagecompute/docusaurus-plugin-pydoc/src/generate.js --project-root .. --output-dir ./docs/api-reference --modules armasec_lite.armasec,armasec_lite.token_security,armasec_lite.token_manager,armasec_lite.token_decoder,armasec_lite.token_payload,armasec_lite.openid_config_loader,armasec_lite.schemas,armasec_lite.jwt,armasec_lite.http,armasec_lite.exceptions,armasec_lite.utilities,armasec_lite.pluggable,armasec_lite.pluggable.hookspecs,armasec_lite.pytest_extension"
   },
   "dependencies": {
     "@docusaurus/core": "^3.10.1",
     "@docusaurus/preset-classic": "^3.10.1",
     "@docusaurus/theme-mermaid": "^3.10.1",
     "@mdx-js/react": "^3.1.1",
-    "@vantagecompute/docusaurus-plugin-pydoc": "file:./vendor/docusaurus-plugin-pydoc",
+    "@vantagecompute/docusaurus-plugin-pydoc": "^0.1.1",
     "@vantagecompute/docusaurus-theme": "0.4.6",
     "clsx": "^2.1.1",
     "prism-react-renderer": "^2.4.1",

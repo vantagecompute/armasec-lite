@@ -42,25 +42,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      # Submodules are checked out separately rather than with `submodules: recursive`,
-      # because .gitmodules records the SSH URL a developer uses and a runner has no SSH
-      # key. Rewriting the transport first keeps one URL form in .gitmodules for everyone
-      # and needs no secret: the plugin repository is public, so nothing here gains access
-      # to anything private. If it is ever made private, this stops working and the fix is
-      # a deploy key, not a wider rewrite rule.
+      # The pydoc plugin comes from npm, so there is no submodule to check out and no
+      # transport rewriting to do. It used to be vendored as a git submodule whose
+      # .gitmodules recorded an SSH URL that a runner has no key for.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Check out submodules over HTTPS
-        run: |
-          # --add on the second rule: insteadOf is multi-valued, so a plain `git config`
-          # REPLACES the previous value rather than appending, and setting both forms
-          # without it leaves only the last one. .gitmodules uses the scp-like
-          # git@github.com: form, so dropping that rule is what breaks it.
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
-          git submodule update --init --recursive
 
       # The API reference is generated from docstrings by the pydoc plugin, which parses
       # the source with `ast` and never imports it. So this needs an interpreter able to

@@ -17,7 +17,7 @@ authentication bypass, not a bug. Read its module docstring before changing it.
 ## Writing docstrings
 
 **The docstrings in `armasec_lite/` are the API reference.** There is no hand-written
-reference page. `docusaurus/vendor/docusaurus-plugin-pydoc` parses each module with `ast`
+reference page. `@vantagecompute/docusaurus-plugin-pydoc` parses each module with `ast`
 at build time and generates the entire reference section from what it finds. A docstring
 you skip is a page section that does not exist.
 
@@ -26,7 +26,8 @@ source: docstrings, signatures, annotations, decorators and class-level assignme
 
 ### What the generator renders, and what that forces
 
-Read `docusaurus/vendor/docusaurus-plugin-pydoc/src/renderer.js` if you need the detail.
+Read `docusaurus/node_modules/@vantagecompute/docusaurus-plugin-pydoc/src/renderer.js` if
+you need the detail.
 The four consequences that change how you write:
 
 **1. The module docstring becomes the page's `## Overview`, and its FIRST LINE becomes the
@@ -180,10 +181,7 @@ print(f'{len(line):3d}  $f  {line}')
 done
 
 # Generate and read the reference. It is the actual deliverable, and building it is the
-# only way to catch heading collisions and layout problems. `git worktree add` does NOT
-# populate submodules, so the pydoc plugin will be missing in a fresh worktree and the
-# build will fail until you init it.
-git submodule update --init --recursive
+# only way to catch heading collisions and layout problems.
 cd docusaurus && npm ci && npm run build && ls docs/api-reference/
 ```
 
@@ -192,17 +190,20 @@ repository's docs were found only by reading generated pages: three module descr
 silently truncated in the index table, and `##` headings in docstrings colliding with the
 generator's own section headings.
 
-### Known limitation
+### Renderer notes
 
 `Args:`, `Returns:` and `Raises:` blocks render as single run-on paragraphs, because the
 renderer emits docstring bodies verbatim into Markdown and Markdown collapses the newlines.
 The content is correct; the formatting is poor, and it is worst on long `Raises:` sections.
 
-Do not work around this by reformatting docstrings into Markdown lists: they would then read
-badly in an editor, in `help()`, and in every IDE tooltip, which is where most people
-actually meet them. The fix belongs in `renderer.js`, which lives in the
-`vantagecompute/docusaurus-plugin-pydoc` repository, vendored here as a submodule. Fixing it
-there improves every Vantage project using the plugin.
+This was fixed upstream in `@vantagecompute/docusaurus-plugin-pydoc` v0.1.1, which this
+project depends on. Recognized Google-style sections now render as Markdown lists.
+
+The general rule still holds: do not work around a rendering problem by reformatting
+docstrings into Markdown. They would then read badly in an editor, in `help()`, and in every
+IDE tooltip, which is where most people actually meet them. Fix the renderer in
+`vantagecompute/docusaurus-plugin-pydoc` instead, which improves every Vantage project using
+the plugin.
 
 ## Testing
 

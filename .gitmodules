@@ -1,4 +1,0 @@
-[submodule "docusaurus/vendor/docusaurus-plugin-pydoc"]
-	path = docusaurus/vendor/docusaurus-plugin-pydoc
-	url = git@github.com:vantagecompute/docusaurus-plugin-pydoc.git
-	branch = main
