@@ -1,0 +1,13 @@
+/node_modules
+/build
+/.docusaurus
+.cache-loader
+
+# Generated at build time by @vantagecompute/docusaurus-plugin-pydoc.
+#
+# Deliberately not committed. The plugin fails the build on an introspection failure, so
+# either these pages are regenerated from current source or there is no build, there is
+# nothing here that can go stale. Committing them would introduce exactly that risk: a
+# generator that warned rather than failed would leave the previous pages in place and the
+# build would publish them as though they were fresh.
+docs/api-reference/
