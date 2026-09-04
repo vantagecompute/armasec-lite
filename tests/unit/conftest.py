@@ -78,6 +78,17 @@ def rsa_jwk(rsa_private):
 
 
 @pytest.fixture(scope="session")
+def attacker_rsa_private():
+    """
+    A second, unrelated 2048 bit RSA key, standing in for one an attacker controls.
+
+    Needed to distinguish "the signature is wrong" from "the key is the wrong type": a
+    forgery that names a legitimate `kid` has to be signed by something.
+    """
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+@pytest.fixture(scope="session")
 def ec_private():
     """A P-256 private key, generated once per session."""
     return ec.generate_private_key(ec.SECP256R1())
