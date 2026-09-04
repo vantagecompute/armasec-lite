@@ -64,11 +64,7 @@ def test_openid_config_accepts_https_urls():
     config = OpenidConfig.model_validate(
         {"issuer": "https://auth.example.com", "jwks_uri": "https://auth.example.com/jwks"}
     )
-    # AnyHttpUrl normalizes a bare-host URL by appending a trailing slash. This matters
-    # later: TokenManager compares str(issuer) against a token's `iss` claim for exact
-    # equality, so a provider's `issuer` value that already omits the trailing slash
-    # (the common case) will not round-trip byte-for-byte through this model.
-    assert str(config.issuer) == "https://auth.example.com/"
+    assert config.issuer == "https://auth.example.com"
     assert str(config.jwks_uri) == "https://auth.example.com/jwks"
 
 
@@ -100,6 +96,18 @@ def test_openid_config_allows_http_jwks_when_https_not_required():
         context={"require_https": False},
     )
     assert str(config.jwks_uri) == "http://localhost:8080/jwks"
+
+
+def test_openid_config_rejects_http_jwks_by_default_with_no_context():
+    """
+    Forgetting to pass `context={"require_https": ...}` must fail closed. A caller that
+    omits the context entirely still gets the https requirement, rather than silently
+    accepting a plaintext JWKS endpoint.
+    """
+    with pytest.raises(ValidationError, match="https"):
+        OpenidConfig.model_validate(
+            {"issuer": "https://auth.example.com", "jwks_uri": "http://auth.example.com/jwks"}
+        )
 
 
 def test_openid_config_retains_unknown_members():
@@ -138,14 +146,20 @@ def test_domain_config_permission_extractor_accepts_a_callable():
     assert config.permission_extractor({"permissions": ["read"]}) == ["read"]
 
 
-def test_token_manager_style_issuer_equality_is_exact_string_comparison():
+def test_issuer_is_preserved_exactly_as_published():
     """
-    Pin the normalization behavior that matters to TokenManager: comparing a token's
-    `iss` claim against `str(config.issuer)` is a strict equality check, so a provider
-    issuer without a trailing slash will not match unless the caller accounts for it.
+    The issuer is compared against a token's `iss` claim by exact string equality, so
+    any normalization here would reject valid tokens from providers that publish a
+    bare-host issuer. Keycloak publishes no trailing slash; Auth0 publishes one. Both
+    must survive untouched.
     """
-    config = OpenidConfig.model_validate(
-        {"issuer": "https://auth.example.com", "jwks_uri": "https://auth.example.com/jwks"}
-    )
-    assert str(config.issuer) != "https://auth.example.com"
-    assert str(config.issuer) == "https://auth.example.com/"
+    for published in (
+        "https://auth.example.com",
+        "https://auth.example.com/",
+        "https://host.example.com/realms/my-realm",
+    ):
+        config = OpenidConfig.model_validate(
+            {"issuer": published, "jwks_uri": "https://auth.example.com/jwks"},
+            context={"require_https": True},
+        )
+        assert config.issuer == published

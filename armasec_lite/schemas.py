@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import Enum
 from typing import Any
+from urllib.parse import urlparse
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, ValidationInfo, field_validator
 
@@ -85,33 +86,56 @@ class OpenidConfig(BaseModel):
     """
     The subset of an openid-configuration document that armasec uses.
 
-    `jwks_uri` arrives inside a document fetched over the network and is then fetched in
-    turn, which is why it, unlike `issuer`, can be pinned to https. Pass
-    `context={"require_https": True}` to `model_validate` to enforce that; the pin is
-    off by default so a `DomainConfig` with `use_https=False` (a local development
-    affordance) can still validate.
+    `issuer` is compared against a token's `iss` claim by exact string equality in
+    `TokenManager`, so it is kept as a plain `str` and validated without being rewritten:
+    a normalized copy (say, one with a trailing slash appended) would no longer match
+    what the provider actually published, and would reject every valid token from a
+    provider that publishes a bare-host issuer. `jwks_uri` has no such constraint, since
+    it is only ever fetched, never compared, so it is kept as `AnyHttpUrl` and pinned to
+    https by default: it arrives inside a document fetched over the network and is then
+    fetched in turn.
 
     Attributes:
-        issuer:   The URL of the issuer of the tokens.
+        issuer:   The URL of the issuer of the tokens, preserved exactly as published.
         jwks_uri: The URI where JWKs can be found on the OpenID server.
     """
 
     model_config = ConfigDict(extra="allow")
 
-    issuer: AnyHttpUrl
+    issuer: str
     jwks_uri: AnyHttpUrl
+
+    @field_validator("issuer")
+    @classmethod
+    def _validate_issuer(cls, value: str) -> str:
+        """
+        Check that `issuer` is an absolute http or https URL with a host, unchanged.
+
+        Uses `urlparse` rather than `AnyHttpUrl` specifically to avoid pydantic's URL
+        normalization, since the value must survive byte-for-byte for later comparison
+        against a token's `iss` claim.
+        """
+        parsed = urlparse(value)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(f"issuer has an unsupported scheme {parsed.scheme!r}: {value!r}")
+        if not parsed.hostname:
+            raise ValueError(f"issuer has no host: {value!r}")
+        return value
 
     @field_validator("jwks_uri")
     @classmethod
     def _pin_jwks_uri_scheme(cls, value: AnyHttpUrl, info: ValidationInfo) -> AnyHttpUrl:
         """
-        Reject an http `jwks_uri` when the validation context requires https.
+        Reject an http `jwks_uri` unless the validation context says https is not required.
 
-        The flag is read from `info.context` rather than a model field so that the same
-        document can be validated under either policy depending on the domain's
-        `use_https` setting, without mutating the document itself.
+        Defaults to requiring https: forgetting to pass `context={"require_https": ...}`
+        must fail closed, not silently accept a plaintext JWKS endpoint. The one caller
+        that legitimately wants it off, `openid_config_loader.py` for a domain configured
+        with `use_https=False`, passes `require_https=False` explicitly.
         """
-        require_https = bool((info.context or {}).get("require_https"))
+        require_https = True
+        if info.context is not None:
+            require_https = info.context.get("require_https", True)
         if require_https and value.scheme != "https":
             raise ValueError(f"jwks_uri must use https: {value}")
         return value
