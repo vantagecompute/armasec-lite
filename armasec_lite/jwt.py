@@ -72,6 +72,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import math
 import re
 import time
 from typing import Any
@@ -248,6 +249,12 @@ def _decode_json_segment(segment: str, label: str) -> dict[str, Any]:
     """
     Decode a base64url segment into a JSON object, rejecting non-objects.
 
+    `Infinity`, `-Infinity` and `NaN` are refused. Python's parser accepts all three even
+    though none is JSON, and an `exp` of `Infinity` or `NaN` is a token that never expires,
+    since `now > inf` is False and every comparison against NaN is False. The same rule
+    that makes this module reject non-canonical base64 applies here: a token has exactly
+    one valid encoding, and an ambiguous one is refused rather than interpreted.
+
     Args:
         segment: The segment to decode.
         label:   The name used in error messages, such as "header" or "payload".
@@ -257,11 +264,16 @@ def _decode_json_segment(segment: str, label: str) -> dict[str, Any]:
 
     Raises:
         InvalidTokenError: The segment is not valid base64url, does not decode to valid
-            JSON, or decodes to something other than a JSON object. Maps to 401.
+            JSON, carries a non-JSON numeric constant, or decodes to something other than
+            a JSON object. Maps to 401.
     """
+
+    def _reject_constant(name: str) -> Any:
+        raise InvalidTokenError(f"Token {label} is not valid JSON: contains {name}")
+
     raw = b64url_decode(segment)
     try:
-        value = json.loads(raw)
+        value = json.loads(raw, parse_constant=_reject_constant)
     except (json.JSONDecodeError, UnicodeDecodeError) as err:
         raise InvalidTokenError(f"Token {label} is not valid JSON: {err}") from err
 
@@ -551,17 +563,25 @@ def _numeric_claim(claims: dict[str, Any], name: str) -> float | None:
     """
     Read a NumericDate claim, rejecting values that are not numbers.
 
+    A NumericDate is a finite number of seconds, so infinities and NaN are refused here as
+    well as at the parser. The parser catches the JSON constants; this catches what it
+    cannot, since `1e400` is ordinary JSON syntax that Python parses to a float infinity,
+    and an `exp` of infinity or NaN is a token that never expires. Integers too large to
+    become a float are refused rather than allowed to raise `OverflowError`, which would
+    escape this module as something other than an `AuthenticationError`.
+
     Args:
         claims: The decoded payload.
         name:   The claim name.
 
     Returns:
-        The claim as a float, or None when the claim is absent.
+        The claim as a finite float, or None when the claim is absent.
 
     Raises:
-        InvalidTokenError: The claim is present but is not a number. `bool` is rejected
-            explicitly, since it is an `int` subclass and a boolean timestamp is always a
-            malformed token. Maps to 401.
+        InvalidTokenError: The claim is present but is not a number, is not finite, or is
+            too large to represent as a float. `bool` is rejected explicitly, since it is
+            an `int` subclass and a boolean timestamp is always a malformed token. Maps
+            to 401.
     """
     if name not in claims:
         return None
@@ -569,7 +589,18 @@ def _numeric_claim(claims: dict[str, Any], name: str) -> float | None:
     # bool is an int subclass, and a boolean timestamp is always a malformed token.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidTokenError(f"Token claim {name!r} is not a number")
-    return float(value)
+
+    try:
+        number = float(value)
+    except OverflowError as err:
+        # An int beyond the float range, such as 10**400. Without this the OverflowError
+        # escapes `decode`, breaking this module's contract that every failure is an
+        # AuthenticationError subclass.
+        raise InvalidTokenError(f"Token claim {name!r} is out of range") from err
+
+    if not math.isfinite(number):
+        raise InvalidTokenError(f"Token claim {name!r} is not a finite number")
+    return number
 
 
 def decode(
@@ -618,8 +649,9 @@ def decode(
 
     Raises:
         InvalidTokenError: The token is not a well formed JWS, a segment is not valid
-            base64url or valid JSON, the header carries a `crit` member, or `exp`, `nbf`
-            or `iat` is present but not a number. Maps to 401.
+            base64url or valid JSON, a segment carries `Infinity`, `-Infinity` or `NaN`,
+            the header carries a `crit` member, or `exp`, `nbf` or `iat` is present and is
+            not a finite number in the float range. Maps to 401.
         InvalidAlgorithmError: The token is an unsecured JWS, carries no `alg`, names an
             algorithm absent from `algorithms`, or names one whose family does not match
             the JWK's `kty`. This is the `alg: none` and algorithm-confusion refusal.
