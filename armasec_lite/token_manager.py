@@ -1,5 +1,33 @@
 """
 Extracts a bearer token from request headers and decodes it.
+
+The thin layer between `TokenSecurity`, which holds one manager per configured domain, and
+`TokenDecoder`, which does the verification. It owns two things the decoder does not: how a
+token is found in a request's headers, and which claim constraints the decoder is asked to
+enforce.
+
+## Header handling
+
+The header name and scheme are class attributes, `header_key` ("Authorization") and
+`auth_scheme` ("bearer"), so they are shared by every instance and are what
+`TokenSecurity` advertises in the OpenAPI document. The scheme is compared
+case-insensitively, since "Bearer" and "bearer" are both correct.
+
+The lookup falls back to a case-insensitive scan when a direct `get` misses. Starlette's
+`Headers` is already case-insensitive, but a plain `dict` is not, and this method is called
+directly by tests and by consumers with dicts they built themselves. Making them match our
+capitalization would be a needless trap.
+
+## Issuer and audience
+
+`verify_issuer` defaults to True, which is a deliberate departure: upstream armasec loads
+the provider's issuer and then never checks a token against it. Pass False for exact
+upstream behavior. The comparison is exact string equality, which is why
+`OpenidConfig.issuer` is stored unnormalized.
+
+Audience verification is skipped only when `ignore_audience` is set and no audience is
+configured, and skipping it is explicit rather than implied by a None audience: a token for
+a different API is otherwise accepted by a route that simply forgot to configure one.
 """
 
 from __future__ import annotations
@@ -17,6 +45,29 @@ from armasec_lite.utilities import noop
 class TokenManager:
     """
     Unpacks a JWT from request headers and hands it to a TokenDecoder.
+
+    One manager exists per configured domain. `TokenSecurity` tries each in turn until one
+    decodes the request's token.
+
+    `auth_scheme` and `header_key` are class attributes rather than instance ones, so
+    `TokenSecurity` can read `TokenManager.header_key` without an instance when building
+    the OpenAPI security scheme.
+
+    Attributes:
+        auth_scheme:             The scheme expected in the header, "bearer". Compared
+                                 case-insensitively. Class-level.
+        header_key:              The header the token is read from, "Authorization".
+                                 Class-level.
+        openid_config:           The provider's configuration, used only for its issuer.
+        token_decoder:           The decoder that verifies the token.
+        audience:                The audience a token must carry, or None.
+        ignore_audience:         Skip audience verification when `audience` is also None.
+        verify_issuer:           Check the token's `iss` against the provider's issuer.
+                                 True by default; upstream armasec never checked it.
+        debug_logger:            A callable such as `logger.debug`, defaulting to `noop`.
+        decode_options_override: Held for compatibility with upstream's signature. The
+                                 decoder carries its own copy, which is the one that takes
+                                 effect.
     """
 
     auth_scheme = "bearer"
@@ -33,7 +84,7 @@ class TokenManager:
         decode_options_override: dict[str, Any] | None = None,
     ):
         """
-        Initialize a TokenManager.
+        Store the provider config, decoder and claim constraints. Nothing is fetched here.
 
         Args:
             openid_config:           The provider's configuration, used for the issuer.
@@ -44,7 +95,10 @@ class TokenManager:
                                      Upstream armasec never performed this check; pass
                                      False for exact upstream behavior.
             debug_logger:            A callable such as `logger.debug`.
-            decode_options_override: Options overriding the default decode behavior.
+            decode_options_override: Accepted for compatibility with upstream armasec's
+                                     signature and stored, but never consulted. The
+                                     decoder holds its own, which is the one that takes
+                                     effect; pass options to `TokenDecoder` instead.
         """
         self.audience = audience
         self.ignore_audience = ignore_audience
@@ -59,9 +113,23 @@ class TokenManager:
         """
         Pull the bearer token out of a request's headers.
 
+        Nothing is verified here. The return value is an attacker-supplied string that has
+        been through no cryptographic check whatsoever; it is only shaped like a token.
+
         Args:
-            headers: The headers to read. Any case-insensitive mapping works, which covers
-                     both a plain dict and starlette's Headers.
+            headers: The headers to read. Any mapping works: a case-insensitive one such
+                     as starlette's `Headers` hits directly, and a plain `dict` falls back
+                     to a case-insensitive scan rather than requiring the caller to match
+                     our capitalization.
+
+        Returns:
+            The token, with the scheme prefix stripped and surrounding whitespace removed.
+
+        Raises:
+            AuthenticationError: The header is absent, has no scheme or no token after it,
+                or names a scheme other than "bearer". Maps to 401. This is the failure an
+                unauthenticated request produces, so it is by far the most common error in
+                the library and is not on its own a sign of an attack.
         """
         self.debug_logger(f"Attempting to unpack token from headers {headers}")
         auth_str = headers.get(self.header_key)
@@ -96,8 +164,24 @@ class TokenManager:
         """
         Retrieve a token from request headers and decode it into a TokenPayload.
 
+        The one method `TokenSecurity` calls per manager. It decides which claim
+        constraints the decoder enforces: the provider's issuer when `verify_issuer` is
+        set, and the configured audience unless `ignore_audience` is set with no audience
+        configured, in which case `verify_aud` is turned off explicitly.
+
         Args:
             headers: The headers to read the token from.
+
+        Returns:
+            The verified payload.
+
+        Raises:
+            AuthenticationError: The header is missing or malformed, the token does not
+                verify, or a claim check failed. Includes the subclasses from
+                `armasec_lite.jwt`, which name the specific failure. Maps to 401.
+            PayloadMappingError: A configured `permission_extractor` did not match the
+                decoded token. Maps to 500, not 401: the token is fine, the server's
+                configuration is not.
         """
         token = self.unpack_token_from_header(headers)
         issuer = self.openid_config.issuer if self.verify_issuer else None

@@ -84,6 +84,8 @@ const config: Config = {
           {module: 'armasec_lite.exceptions', label: 'exceptions'},
           {module: 'armasec_lite.utilities', label: 'utilities'},
           {module: 'armasec_lite.pluggable', label: 'pluggable'},
+          {module: 'armasec_lite.pluggable.hookspecs', label: 'pluggable.hookspecs'},
+          {module: 'armasec_lite.pytest_extension', label: 'pytest_extension'},
         ],
         outputDir: './docs/api-reference',
       },
