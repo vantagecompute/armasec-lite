@@ -30,10 +30,10 @@ forced into every production install. Four more (`snick`, `py-buzz`, `auto-name-
 | `fastapi` | kept |
 | (new) | `cryptography` |
 
-## Three differences from upstream
+## Four differences from upstream
 
-`armasec-lite` targets a drop-in migration, but three things behave differently. Each is
-covered in full on the [migration guide](./migration.md).
+`armasec-lite` targets a drop-in migration, but four things differ. Each is covered in
+full on the [migration guide](./migration.md).
 
 1. **Import name.** The package imports as `armasec_lite`, not `armasec`. The distribution
    name changes too: `armasec-lite`, not `armasec`.
@@ -45,6 +45,10 @@ covered in full on the [migration guide](./migration.md).
    instance. Tests that construct more than one `Armasec` against the same domain need to
    call `armasec_lite.openid_config_loader.clear_cache()` between them, or use the shipped
    `mock_openid_server` pytest fixture, which does this automatically.
+4. **`TokenDecoder` gained an optional `jwks_refresher` argument.** This is purely
+   additive and requires no action: the first positional argument is still `JWKs`, so
+   every existing construction site is unaffected. It is what lets a JWKS key rotation
+   recover without a process restart.
 
 ## Request flow
 

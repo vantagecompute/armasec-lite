@@ -5,7 +5,22 @@ sidebar_position: 3
 
 `armasec-lite` targets a drop-in migration from upstream armasec 3.0.3: `Armasec`,
 `TokenSecurity`, and `DomainConfig` keep the same fields and the same method signatures.
-Three things behave differently. Each is intentional and each has a documented fix.
+Four things differ. Each is intentional and each has a documented fix.
+
+## Prerequisite: you must already be on armasec 3.x
+
+`armasec-lite` is a port of upstream armasec 3.x specifically. It does not cover, and was
+not designed against, armasec 2.x. If you are still on 2.x, upgrade to 3.x first, confirm
+your application still works, and only then swap the dependency. Migrating from 2.x
+directly to `armasec-lite` is out of scope and untested.
+
+This is worth checking explicitly rather than assuming: a dependency floor like
+`armasec>=2.0.0` admits both major versions, so it is possible to be on 2.x without
+realizing it. Check what actually resolved:
+
+```bash
+uv pip show armasec
+```
 
 ## 1. Import name
 
@@ -60,6 +75,26 @@ the same domain, expecting independent state, now see each other's cached config
 **Fix:** call `armasec_lite.openid_config_loader.clear_cache()` between tests, or use the
 `mock_openid_server` pytest fixture from the `[test]` extra, which calls it automatically on
 entry and exit.
+
+## 4. `TokenDecoder` gained an optional `jwks_refresher` argument
+
+Upstream's `TokenDecoder` receives a `JWKs` value at construction and has no way to ask
+for a fresh one. When a token presents a `kid` the current JWKS does not contain, the
+usual cause is a provider key rotation, and upstream has no path to recover: the process
+must restart before it will accept tokens signed by the new key.
+
+`armasec-lite`'s `TokenDecoder` gains an optional keyword argument,
+`jwks_refresher: Callable[[], JWKs] | None = None`, and the library wires
+`loader.refresh_jwks` into it internally. On an unknown `kid`, the decoder calls the
+refresher and searches the refreshed JWKS once more before giving up, so a rotation
+recovers without a process restart. This is rate limited to once per 300 seconds, so a
+flood of tokens signed with an unrecognized key cannot become a flood of outbound requests
+to the provider.
+
+**Fix:** none required. This is purely additive: the first positional argument to
+`TokenDecoder` is still `JWKs`, so every existing construction site is unaffected. Almost
+nobody constructs `TokenDecoder` directly, since it is normally wired up internally by
+`Armasec`, which is why this change ranks below the cache change in practical impact.
 
 ## What does not change
 
