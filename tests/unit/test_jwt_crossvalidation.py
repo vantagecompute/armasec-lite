@@ -135,6 +135,44 @@ def test_eddsa_round_trips_through_pyjwt(ed_private, ed_jwk):
     assert decode(token, ed_jwk, ["EdDSA"])["sub"] == "abc"
 
 
+def test_our_es256_token_verifies_under_pyjwt(ec_private):
+    """
+    The direction that catches a mirrored bug: our _sign does DER to raw r||s and our
+    verify does raw to DER, so a matched pair of errors round-trips cleanly through our
+    own tests and fails only against an independent verifier.
+    """
+    private_pem = ec_private.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_pem = ec_private.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    now = int(time.time())
+    token = encode({"sub": "abc", "exp": now + 60}, private_pem, "ES256")
+    claims = pyjwt.decode(token, public_pem, algorithms=["ES256"], options={"verify_aud": False})
+    assert claims["sub"] == "abc"
+
+
+def test_our_eddsa_token_verifies_under_pyjwt(ed_private):
+    """Same argument as ES256, without the coordinate encoding."""
+    private_pem = ed_private.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_pem = ed_private.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    now = int(time.time())
+    token = encode({"sub": "abc", "exp": now + 60}, private_pem, "EdDSA")
+    claims = pyjwt.decode(token, public_pem, algorithms=["EdDSA"], options={"verify_aud": False})
+    assert claims["sub"] == "abc"
+
+
 def test_hs256_round_trips_through_pyjwt(oct_jwk):
     now = int(time.time())
     secret = b"s" * 32
