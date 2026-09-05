@@ -52,7 +52,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
-from bench import report
+from bench import cgroup, report
 
 PROXY_HOST = os.environ.get("HARNESS_PROXY_HOST", "oidc-proxy")
 PROXY_PORT = int(os.environ.get("HARNESS_PROXY_PORT", "8080"))
@@ -515,6 +515,22 @@ def library_versions() -> dict[str, str]:
         document = http_json(f"http://{arm.host}:{arm.port}/health")
         versions[arm.name] = f"{document['lib']} {document['version']}"
     return versions
+
+
+def lite_version() -> str:
+    """
+    Read the bare version string armasec-lite reports about itself.
+
+    Taken from the running container rather than from `pyproject.toml`, because the version
+    a result directory is filed under has to be the version that produced the numbers, and
+    an image built before an edit to the metadata would otherwise be filed under the edit.
+
+    Returns:
+        The version, such as `0.1.0`, or `unknown` if the arm does not report one.
+    """
+    lite = next(arm for arm in ARMS if arm.name == "lite")
+    document = http_json(f"http://{lite.host}:{lite.port}/health")
+    return str(document.get("version") or "unknown")
 
 
 # --------------------------------------------------------------------------------------
@@ -1744,12 +1760,624 @@ def profile_pass(context: Context) -> dict[str, Any]:
     }
 
 
+# --------------------------------------------------------------------------------------
+# S9, S10, S11: process CPU and memory read from the kernel's own counters
+# --------------------------------------------------------------------------------------
+
+#: The same ladder S3 uses, so a CPU figure at a rate can be set beside the latency figure
+#: measured at that rate without either being interpolated.
+S9_RATES = S3_RATES
+S9_WARMUP = 2.0
+S9_DURATION = 10.0
+#: An idle window taken immediately before each measurement window, on the same container,
+#: so the CPU an idle uvicorn costs can be subtracted from the CPU a loaded one costs. Taken
+#: locally rather than once per run because a container that has just served a flood is not
+#: in the same state as one that has just started, and the correction should describe the
+#: former.
+S9_IDLE_SECONDS = 2.0
+#: How long after the load stops memory is read again, to answer whether the working set
+#: comes back down or stays where the load left it.
+S9_SETTLE_SECONDS = 2.0
+S9_SAMPLE_INTERVAL = 0.5
+
+#: Fine enough to resolve the shape of a one second stall into roughly twenty points, and
+#: cheap enough that the sampler thread does nothing but read two small pseudo-files.
+S10_SAMPLE_INTERVAL = 0.05
+#: The stall window runs from the cold request firing to a little past the two injected
+#: provider delays it has to wait through.
+S10_STALL_TAIL_SECONDS = 0.2
+
+S11_SECONDS = 30.0
+S11_SAMPLE_INTERVAL = 1.0
+
+
+def cpu_reader(context: Context, arm: Arm) -> cgroup.Reader:
+    """
+    Open a handle on one arm's cgroup.
+
+    Resolved fresh at each use rather than cached, because a container restart between
+    repetitions tears the cgroup down and creates it again, and a stale path would read a
+    directory the kernel has removed.
+
+    Args:
+        context: The run context.
+        arm:     The arm whose container to read.
+
+    Returns:
+        The reader.
+    """
+    return cgroup.Reader(context.docker.container_id(arm.service))
+
+
+def sample_during(reader: cgroup.Reader, interval: float) -> tuple[cgroup.Series, Any, Any]:
+    """
+    Start a background cgroup sampler and hand back the means to stop it.
+
+    Args:
+        reader:   The cgroup to sample.
+        interval: Seconds between samples.
+
+    Returns:
+        The series being filled, the event that stops it, and the thread doing the filling.
+    """
+    series = cgroup.Series(reader, interval=interval)
+    stop = threading.Event()
+    thread = threading.Thread(target=series.collect, args=(stop,), daemon=True)
+    thread.start()
+    return series, stop, thread
+
+
+def disjoint(legacy: list[float], lite: list[float]) -> bool:
+    """
+    Say whether two sets of repetitions have non-overlapping ranges.
+
+    The same blunt test `report.verdict` applies, exposed on its own for the scenarios whose
+    quantity has no better and worse direction and for which "wins" would be the wrong word.
+
+    Args:
+        legacy: One value per repetition for the upstream arm.
+        lite:   One value per repetition for the armasec-lite arm.
+
+    Returns:
+        True when the observed ranges do not overlap.
+    """
+    if len(legacy) < 3 or len(lite) < 3:
+        return False
+    left, right = report.across_reps(legacy), report.across_reps(lite)
+    return not (left["min"] <= right["max"] and right["min"] <= left["max"])
+
+
+def s9_cpu_per_request(context: Context) -> dict[str, Any]:
+    """
+    Scenario S9: how much CPU does each arm actually spend to serve one warm request?
+
+    Call counts are a proxy for work and this is the work itself. The kernel keeps a
+    container's consumed CPU in `cpu.stat`, so the CPU a measurement window cost is the
+    difference between a reading at each end of it, divided by the requests served in it.
+    Nothing is sampled from inside either application, nothing is instrumented, and the
+    counters are read through a read-only bind mount of the host cgroup filesystem, so the
+    act of measuring charges no CPU to the container being measured.
+
+    The result is allowed to disagree with the call-graph scenario. A flat CPU figure beside
+    a real latency difference would say the latency difference is not compute, and that is a
+    more useful finding than a confirmation would be, so the scenario is built to be able to
+    produce it: the same rate ladder as S3, the same open-loop generator, an idle window
+    taken on the same container immediately beforehand so the idle cost of an uvicorn worker
+    can be subtracted, and every repetition's value kept.
+
+    `memory.current` is sampled through the same windows, and read again after the load
+    stops, because whether a working set plateaus, keeps climbing, or comes back down is
+    three different findings and a single reading taken at the end cannot tell them apart.
+
+    Args:
+        context: The run context.
+
+    Returns:
+        The scenario document.
+    """
+    proxy_latency(0)
+    duration = context.scale(S9_DURATION)
+    warmup = context.scale(S9_WARMUP)
+    idle_seconds = context.scale(S9_IDLE_SECONDS)
+    settle_seconds = context.scale(S9_SETTLE_SECONDS)
+    rates = S9_RATES if not context.quick else S9_RATES[:2]
+    results: dict[str, dict[str, list[dict[str, Any]]]] = {
+        f"{rate:.0f}": {"legacy": [], "lite": []} for rate in rates
+    }
+
+    for arm in ARMS:
+        wait_healthy(arm)
+        asyncio.run(fetch(arm.host, arm.port, "/stuff", context.minter.token))
+
+    for repetition in range(context.reps):
+        for rate in rates:
+            for arm in context.order(repetition):
+                token = context.minter.token
+                reader = cpu_reader(context, arm)
+
+                idle_open = reader.snapshot()
+                time.sleep(idle_seconds)
+                idle_close = reader.snapshot()
+                idle = cgroup.delta(idle_open, idle_close)
+
+                asyncio.run(open_loop(arm, "/stuff", rate=rate, duration=warmup, token=token))
+
+                window_open = reader.snapshot()
+                series, stop, thread = sample_during(reader, S9_SAMPLE_INTERVAL)
+                samples = asyncio.run(
+                    open_loop(arm, "/stuff", rate=rate, duration=duration, token=token)
+                )
+                stop.set()
+                thread.join(timeout=10.0)
+                window_close = reader.snapshot()
+                window = cgroup.delta(window_open, window_close)
+
+                time.sleep(settle_seconds)
+                settled = reader.snapshot()
+
+                probes = context.docker.health_probes_since(arm.service, window_open.wall)
+                stats = sample_stats(samples)
+                served = stats["successful"] or 1
+                idle_cpu_ms = idle["cores_used"] * window["window_seconds"] * 1000.0
+                memory = series.memory_bytes()
+                anon = series.anon_bytes()
+                results[f"{rate:.0f}"][arm.name].append(
+                    {
+                        "requests_offered": stats["requests"],
+                        "requests_served": stats["successful"],
+                        "achieved_rps": stats["achieved_rps"],
+                        "latency_p50_ms": stats["latency_ms"]["p50"],
+                        "latency_p99_ms": stats["latency_ms"]["p99"],
+                        "statuses": stats["statuses"],
+                        "cpu_window": window,
+                        "cpu_idle_window": idle,
+                        "cpu_ms_per_request": window["cpu_ms"] / served,
+                        "user_ms_per_request": window["user_ms"] / served,
+                        "system_ms_per_request": window["system_ms"] / served,
+                        "cpu_ms_per_request_idle_corrected": max(
+                            0.0, window["cpu_ms"] - idle_cpu_ms
+                        )
+                        / served,
+                        "idle_cpu_ms_attributed_to_window": idle_cpu_ms,
+                        "health_probes_in_window": probes,
+                        "memory_first_bytes": memory[0] if memory else None,
+                        "memory_last_bytes": memory[-1] if memory else None,
+                        "memory_max_bytes": max(memory) if memory else None,
+                        "memory_climb_bytes": (memory[-1] - memory[0]) if len(memory) >= 2 else 0,
+                        "memory_after_settle_bytes": settled.memory_bytes,
+                        "anon_first_bytes": anon[0] if anon else None,
+                        "anon_last_bytes": anon[-1] if anon else None,
+                        "anon_max_bytes": max(anon) if anon else None,
+                        "anon_climb_bytes": (anon[-1] - anon[0]) if len(anon) >= 2 else 0,
+                        "anon_after_settle_bytes": settled.anon_bytes,
+                        "memory_peak_bytes_since_container_start": window_close.peak_bytes,
+                        "memory_series": series.rates(),
+                    }
+                )
+                last = results[f"{rate:.0f}"][arm.name][-1]
+                context.log(
+                    f"S9 rep {repetition + 1} {arm.name} @{rate:.0f}rps: "
+                    f"{window['cpu_ms']:.0f}ms CPU over {window['window_seconds']:.1f}s "
+                    f"({window['cores_used']:.2f} cores) for {stats['successful']} served = "
+                    f"{last['cpu_ms_per_request']:.3f}ms/req "
+                    f"({last['cpu_ms_per_request_idle_corrected']:.3f} idle-corrected), "
+                    f"idle {idle['cores_used']:.3f} cores, "
+                    f"anon {(last['anon_max_bytes'] or 0) / 1048576:.1f}MiB, "
+                    f"{probes} health probes, throttled {window['nr_throttled']}"
+                )
+
+    measurements: dict[str, Any] = {}
+    verdicts: dict[str, str] = {}
+    rows: list[list[str]] = []
+    for rate in rates:
+        key = f"{rate:.0f}"
+        per_arm = results[key]
+        block: dict[str, Any] = {}
+        for metric in (
+            "cpu_ms_per_request",
+            "cpu_ms_per_request_idle_corrected",
+            "user_ms_per_request",
+            "system_ms_per_request",
+            "achieved_rps",
+            "latency_p50_ms",
+            "latency_p99_ms",
+        ):
+            block[metric] = {
+                arm: report.across_reps([float(rep[metric]) for rep in per_arm[arm]])
+                for arm in per_arm
+            }
+        for metric in ("cores_used", "cpu_ms", "nr_throttled"):
+            block[f"window_{metric}"] = {
+                arm: report.across_reps([float(rep["cpu_window"][metric]) for rep in per_arm[arm]])
+                for arm in per_arm
+            }
+        for metric in (
+            "memory_max_bytes",
+            "memory_climb_bytes",
+            "memory_last_bytes",
+            "memory_after_settle_bytes",
+            "anon_max_bytes",
+            "anon_climb_bytes",
+            "anon_last_bytes",
+            "anon_after_settle_bytes",
+            "health_probes_in_window",
+        ):
+            block[metric] = {
+                arm: report.across_reps(
+                    [float(rep[metric] or 0) for rep in per_arm[arm]],
+                )
+                for arm in per_arm
+            }
+        block["repetitions"] = per_arm
+        measurements[f"target_{key}_rps"] = block
+        verdicts[f"{key}rps_cpu_ms_per_request"] = report.verdict(
+            block["cpu_ms_per_request"]["legacy"]["values"],
+            block["cpu_ms_per_request"]["lite"]["values"],
+        )
+        verdicts[f"{key}rps_cpu_ms_per_request_idle_corrected"] = report.verdict(
+            block["cpu_ms_per_request_idle_corrected"]["legacy"]["values"],
+            block["cpu_ms_per_request_idle_corrected"]["lite"]["values"],
+        )
+        verdicts[f"{key}rps_anon_max_bytes"] = report.verdict(
+            block["anon_max_bytes"]["legacy"]["values"],
+            block["anon_max_bytes"]["lite"]["values"],
+        )
+        verdicts[f"{key}rps_anon_climb_bytes"] = report.verdict(
+            block["anon_climb_bytes"]["legacy"]["values"],
+            block["anon_climb_bytes"]["lite"]["values"],
+        )
+        rows.append(
+            [
+                f"S9 @{key}rps CPU per request (ms)",
+                f"{block['cpu_ms_per_request']['legacy']['median']:.3f}",
+                f"{block['cpu_ms_per_request']['lite']['median']:.3f}",
+                verdicts[f"{key}rps_cpu_ms_per_request"],
+            ]
+        )
+    rows.append(
+        [
+            "S9 anon memory under load, top rate (MiB)",
+            f"{measurements[f'target_{rates[-1]:.0f}_rps']['anon_max_bytes']['legacy']['median'] / 1048576:.1f}",
+            f"{measurements[f'target_{rates[-1]:.0f}_rps']['anon_max_bytes']['lite']['median'] / 1048576:.1f}",
+            verdicts[f"{rates[-1]:.0f}rps_anon_max_bytes"],
+        ]
+    )
+
+    return {
+        "scenario": "S9",
+        "title": "CPU and memory per warm request, from the kernel's cgroup v2 counters",
+        "question": (
+            "Does one library spend measurably more CPU per request than the other, and "
+            "does either accumulate memory over a fixed workload?"
+        ),
+        "config": {
+            "path": "/stuff",
+            "target_rates_per_second": list(rates),
+            "warmup_seconds_discarded": warmup,
+            "measured_seconds": duration,
+            "idle_window_seconds_before_each_measurement": idle_seconds,
+            "settle_seconds_after_load": settle_seconds,
+            "memory_sample_interval_seconds": S9_SAMPLE_INTERVAL,
+            "cgroup_version": "v2",
+            "counters": ["cpu.stat usage_usec/user_usec/system_usec", "memory.current"],
+            "sampled_how": (
+                "the host cgroup filesystem bind-mounted read only into the bench "
+                "container, differenced across the window; never with docker exec, which "
+                "would charge the reader's own CPU to the container being read"
+            ),
+            "open_loop": True,
+            "injected_provider_latency_ms": 0,
+        },
+        "measurements": measurements,
+        "verdicts": verdicts,
+        "summary_rows": rows,
+    }
+
+
+def s10_cpu_during_cold_load(context: Context) -> dict[str, Any]:
+    """
+    Scenario S10: is the S4 stall a busy process or an idle one?
+
+    Blocking on network I/O and being CPU-saturated look identical in a latency chart and
+    are completely different problems. CPU tells them apart: a process blocked in a socket
+    read burns almost no CPU while its latency is terrible, and a saturated one burns all of
+    it. The S4 workload is repeated with each container's `cpu.stat` sampled every fifty
+    milliseconds, so the second in which upstream stops answering `/health` can be looked at
+    directly.
+
+    The expectation is that upstream's CPU falls toward its idle level during the stall
+    while its `/health` latency climbs to about a second, which would make the stall idle
+    waiting rather than overload. If instead its CPU is high during the stall, the
+    explanation this repository has been giving is wrong, and the result file records that
+    outcome as readily as the other one.
+
+    Sampling runs in a thread in the bench container reading two pseudo-files, so unlike the
+    in-process profiler it perturbs neither arm and can be taken during the measured window
+    rather than in a separate pass.
+
+    Args:
+        context: The run context.
+
+    Returns:
+        The scenario document, with the CPU series for every repetition beside the `/health`
+        latency series, which is what makes the two plottable on one time axis.
+    """
+    duration, trigger_at = s4_duration(context)
+    stall_end = trigger_at + (2 * S4_LATENCY_MS / 1000.0) + S10_STALL_TAIL_SECONDS
+    per_arm: dict[str, list[dict[str, Any]]] = {"legacy": [], "lite": []}
+
+    for repetition in range(context.reps):
+        for arm in context.order(repetition):
+            proxy_latency(0)
+            restart(context, arm)
+            proxy_latency(S4_LATENCY_MS)
+            token = context.minter.token
+            reader = cpu_reader(context, arm)
+
+            window_open = reader.snapshot()
+            series, stop, thread = sample_during(reader, S10_SAMPLE_INTERVAL)
+            origin = time.monotonic()
+            samples, auth_ms, auth_status = asyncio.run(
+                s4_one_run(arm, token, duration, trigger_at)
+            )
+            stop.set()
+            thread.join(timeout=10.0)
+            window_close = reader.snapshot()
+            proxy_latency(0)
+
+            # The sampler's clock and the generator's are both CLOCK_MONOTONIC, so the run
+            # is placed on the sampler's timeline by subtracting the instant the run began.
+            # The generator's own t=0 is a fraction of a millisecond later than `origin`,
+            # which is far inside one 50ms sample.
+            rates = [{**entry, "t": round(entry["t"] - origin, 4)} for entry in series.rates()]
+            before = [e["cores_used"] for e in rates if e["t"] < trigger_at - 0.2]
+            during = [e["cores_used"] for e in rates if trigger_at <= e["t"] < stall_end]
+            after = [e["cores_used"] for e in rates if e["t"] >= stall_end]
+            health_during = [
+                s.latency_ms for s in samples if trigger_at - 0.2 <= s.scheduled < stall_end
+            ]
+            health_before = [s.latency_ms for s in samples if s.scheduled < trigger_at - 0.2]
+            per_arm[arm.name].append(
+                {
+                    "auth_request_ms": auth_ms,
+                    "auth_status": auth_status,
+                    # The container was restarted moments ago, so Docker may still be
+                    # probing it on the short start interval. A probe costs the container
+                    # 93ms of CPU, which is visible against a baseline this low, so the
+                    # count is reported rather than left inside the number unannounced.
+                    "health_probes_in_window": context.docker.health_probes_since(
+                        arm.service, window_open.wall
+                    ),
+                    "cpu_whole_run": cgroup.delta(window_open, window_close),
+                    "cores_baseline_mean": (sum(before) / len(before)) if before else 0.0,
+                    "cores_during_stall_mean": (sum(during) / len(during)) if during else 0.0,
+                    "cores_during_stall_max": max(during) if during else 0.0,
+                    "cores_after_stall_mean": (sum(after) / len(after)) if after else 0.0,
+                    "cpu_ms_during_stall": sum(
+                        e["cpu_ms"] for e in rates if trigger_at <= e["t"] < stall_end
+                    ),
+                    "health_baseline_p50_ms": report.percentile(health_before, 0.50),
+                    "health_during_stall_p99_ms": report.percentile(health_during, 0.99),
+                    "worst_health_ms": max((s.latency_ms for s in samples), default=0.0),
+                    "cpu_series": rates,
+                    "health_series": [
+                        {"t": round(s.scheduled, 4), "latency_ms": round(s.latency_ms, 3)}
+                        for s in sorted(samples, key=lambda s: s.scheduled)
+                    ],
+                }
+            )
+            last = per_arm[arm.name][-1]
+            context.log(
+                f"S10 rep {repetition + 1} {arm.name}: baseline "
+                f"{last['cores_baseline_mean']:.3f} cores, during the stall "
+                f"{last['cores_during_stall_mean']:.3f} cores while /health p99 was "
+                f"{last['health_during_stall_p99_ms']:.0f}ms, cold auth {auth_ms:.0f}ms"
+            )
+
+    def column(key: str) -> dict[str, list[float]]:
+        return {arm: [float(rep[key]) for rep in reps] for arm, reps in per_arm.items()}
+
+    stall_cores = column("cores_during_stall_mean")
+    baseline_cores = column("cores_baseline_mean")
+    stall_p99 = column("health_during_stall_p99_ms")
+
+    def shape(arm: str) -> str:
+        stall = report.across_reps(stall_cores[arm])["median"]
+        base = report.across_reps(baseline_cores[arm])["median"]
+        latency = report.across_reps(stall_p99[arm])["median"]
+        verb = "below" if stall < base else "above"
+        return (
+            f"{stall:.3f} cores during the stall against a {base:.3f} core baseline "
+            f"({verb} baseline) while /health p99 was {latency:.0f}ms"
+        )
+
+    return {
+        "scenario": "S10",
+        "title": "CPU consumed while the cold OIDC load is in flight",
+        "question": (
+            "Is the stall a process that is blocked and idle, or a process that is "
+            "saturated? Latency alone cannot tell them apart."
+        ),
+        "config": {
+            "workload": "the S4 workload, sampled concurrently rather than in a separate pass",
+            "health_rate_per_second": S4_RATE,
+            "duration_seconds": duration,
+            "cold_auth_triggered_at_seconds": trigger_at,
+            "stall_window_ends_at_seconds": stall_end,
+            "injected_provider_latency_ms": S4_LATENCY_MS,
+            "cpu_sample_interval_seconds": S10_SAMPLE_INTERVAL,
+            "cgroup_version": "v2",
+            "sampled_how": (
+                "cpu.stat differenced between consecutive samples read from the host cgroup "
+                "filesystem bind-mounted read only into the bench container"
+            ),
+            "cpu_limit_cores": 1.0,
+            "restart_before_each_repetition": True,
+        },
+        "measurements": {
+            "cores_during_stall": {
+                arm: report.across_reps(values) for arm, values in stall_cores.items()
+            },
+            "cores_baseline": {
+                arm: report.across_reps(values) for arm, values in baseline_cores.items()
+            },
+            "cores_after_stall": {
+                arm: report.across_reps(values)
+                for arm, values in column("cores_after_stall_mean").items()
+            },
+            "cpu_ms_during_stall": {
+                arm: report.across_reps(values)
+                for arm, values in column("cpu_ms_during_stall").items()
+            },
+            "health_p99_during_stall_ms": {
+                arm: report.across_reps(values) for arm, values in stall_p99.items()
+            },
+            "cold_auth_request_ms": {
+                arm: report.across_reps(values) for arm, values in column("auth_request_ms").items()
+            },
+            "health_probes_in_window": {
+                arm: report.across_reps(values)
+                for arm, values in column("health_probes_in_window").items()
+            },
+            "repetitions": per_arm,
+        },
+        "verdicts": {
+            "legacy_shape": f"upstream armasec: {shape('legacy')}",
+            "lite_shape": f"armasec-lite: {shape('lite')}",
+            "cores_during_stall": (
+                "ranges disjoint"
+                if disjoint(stall_cores["legacy"], stall_cores["lite"])
+                else "within noise (repetition ranges overlap)"
+            ),
+        },
+        "summary_rows": [
+            [
+                "S10 CPU during the cold load (cores of 1.0)",
+                f"{report.across_reps(stall_cores['legacy'])['median']:.3f}",
+                f"{report.across_reps(stall_cores['lite'])['median']:.3f}",
+                "diagnostic, not a win: read it beside the /health p99 row",
+            ],
+            [
+                "S10 /health p99 during the cold load (ms)",
+                f"{report.across_reps(stall_p99['legacy'])['median']:.0f}",
+                f"{report.across_reps(stall_p99['lite'])['median']:.0f}",
+                "low CPU with high latency is blocking, not overload",
+            ],
+        ],
+    }
+
+
+def s11_idle_cpu(context: Context) -> dict[str, Any]:
+    """
+    Scenario S11: does either arm burn CPU when nothing is asking it for anything?
+
+    A server that costs CPU at rest costs it on every replica of every deployment, forever,
+    and a background timer or a polling thread is easy to add without noticing. The expected
+    answer is that both arms are at essentially zero and this scenario is a null result; any
+    other answer is a finding.
+
+    Both containers are sampled across the same wall-clock window, which is both fair and
+    half the elapsed time, and is only possible because neither is being offered load.
+
+    Args:
+        context: The run context.
+
+    Returns:
+        The scenario document.
+    """
+    proxy_latency(0)
+    seconds = context.scale(S11_SECONDS)
+    for arm in ARMS:
+        restart(context, arm)
+    # Let the interpreter finish whatever it does after its first health check, so the
+    # window measures an idle server and not the tail of its own startup.
+    time.sleep(5.0)
+
+    readers = {arm.name: cpu_reader(context, arm) for arm in ARMS}
+    opened = {name: reader.snapshot() for name, reader in readers.items()}
+    watchers = {
+        name: sample_during(reader, S11_SAMPLE_INTERVAL) for name, reader in readers.items()
+    }
+    time.sleep(seconds)
+    measurements: dict[str, Any] = {}
+    for arm in ARMS:
+        series, stop, thread = watchers[arm.name]
+        stop.set()
+        thread.join(timeout=10.0)
+        closed = readers[arm.name].snapshot()
+        window = cgroup.delta(opened[arm.name], closed)
+        probes = context.docker.health_probes_since(arm.service, opened[arm.name].wall)
+        memory = series.memory_bytes()
+        anon = series.anon_bytes()
+        measurements[arm.name] = {
+            "cpu_window": window,
+            "cpu_ms_per_second_idle": window["cpu_ms"] / window["window_seconds"],
+            "cores_used": window["cores_used"],
+            "health_probes_in_window": probes,
+            "memory_first_bytes": memory[0] if memory else None,
+            "memory_last_bytes": memory[-1] if memory else None,
+            "memory_climb_bytes": (memory[-1] - memory[0]) if len(memory) >= 2 else 0,
+            "anon_first_bytes": anon[0] if anon else None,
+            "anon_last_bytes": anon[-1] if anon else None,
+            "anon_climb_bytes": (anon[-1] - anon[0]) if len(anon) >= 2 else 0,
+            "series": series.rates(),
+        }
+        context.log(
+            f"S11 idle {arm.name}: {window['cpu_ms']:.1f}ms CPU over "
+            f"{window['window_seconds']:.1f}s = {window['cores_used'] * 100:.3f}% of a core, "
+            f"{probes} health probes, anon {(anon[-1] if anon else 0) / 1048576:.1f}MiB"
+        )
+
+    def pct(name: str) -> str:
+        return f"{measurements[name]['cores_used'] * 100:.3f}"
+
+    return {
+        "scenario": "S11",
+        "title": "CPU consumed by an idle container over a quiet window",
+        "question": "Does either arm cost CPU when no request is in flight?",
+        "config": {
+            "window_seconds": seconds,
+            "traffic": "none, both containers restarted and left alone",
+            "settle_seconds_before_the_window": 5.0,
+            "sample_interval_seconds": S11_SAMPLE_INTERVAL,
+            "both_arms_sampled_across_the_same_wall_clock_window": True,
+            "cgroup_version": "v2",
+            "single_window": "one window per arm, so there is no repetition spread to report",
+            "health_probes_counted": (
+                "Docker charges a health probe's CPU to the container it probes, so any "
+                "probe landing inside the window is counted from the daemon's health log "
+                "and reported rather than being left inside the figure unannounced"
+            ),
+        },
+        "measurements": measurements,
+        "verdicts": {
+            "idle_cpu": (
+                f"upstream {pct('legacy')}% of a core vs armasec-lite {pct('lite')}%, "
+                f"over one {seconds:.0f} second window, with "
+                f"{measurements['legacy']['health_probes_in_window']} and "
+                f"{measurements['lite']['health_probes_in_window']} health probes in them"
+            )
+        },
+        "summary_rows": [
+            [
+                "S11 idle CPU (% of one core)",
+                pct("legacy"),
+                pct("lite"),
+                f"one {seconds:.0f}s window, no traffic",
+            ]
+        ],
+    }
+
+
 SCENARIOS = {
     "s4": s4_event_loop_blocking,
     "s3": s3_flood,
     "s1": s1_cold_start,
     "s2": s2_amplification,
     "s8": s8_failing_provider,
+    "s9": s9_cpu_per_request,
+    "s10": s10_cpu_during_cold_load,
+    "s11": s11_idle_cpu,
     "footprint": footprint,
     "memory": memory_footprint,
     "callgraph": call_graph,
@@ -1763,6 +2391,9 @@ FILENAMES = {
     "s3": "s3_warm_flood",
     "s4": "s4_event_loop_blocking",
     "s8": "s8_failing_provider",
+    "s9": "s9_cpu_per_request",
+    "s10": "s10_cpu_during_cold_load",
+    "s11": "s11_idle_cpu",
     "footprint": "footprint",
     "memory": "memory",
     "callgraph": "call_graph",

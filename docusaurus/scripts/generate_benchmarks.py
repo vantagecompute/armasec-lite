@@ -67,6 +67,16 @@ SCENARIO_ORDER = (
     "s8_failing_provider",
 )
 
+#: The order a run's own page walks its scenarios in: the editorial order above, then
+#: everything else the harness writes. A run page reports what one run measured, so a
+#: scenario that has no hand-written section on the summary page still gets its title, its
+#: question and its verdict table here rather than being dropped from the page of the only
+#: run that measured it.
+RUN_PAGE_ORDER = (
+    *SCENARIO_ORDER,
+    *(stem for stem in layout.SCENARIO_FILES if stem not in SCENARIO_ORDER),
+)
+
 ARMS = ("legacy", "lite")
 LABELS = charts.ARM_LABELS
 #: The same names, capitalised, for the start of a sentence. `armasec-lite` is a package
@@ -1632,7 +1642,7 @@ def write_run_page(run: dict[str, Any], position: int) -> str:
         )
     )
 
-    for stem in SCENARIO_ORDER:
+    for stem in RUN_PAGE_ORDER:
         if stem not in run["documents"]:
             continue
         document = run["documents"][stem]

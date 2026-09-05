@@ -2,7 +2,7 @@
 The scenario driver: pick scenarios, run them, write result files, print a summary.
 
 Every run keeps its own directory. The files land in
-`results/v<armasec-lite version>/<timestamp>-<host>/`, both parts taken from the run's own
+`results/v<armasec-lite version>/<UTC timestamp>/`, both parts taken from the run's own
 provenance, and `results/index.json` is rebuilt from the whole tree afterwards. No run ever
 overwrites another, so a regression between two versions is visible in the repository rather
 than only in whoever ran it last. See `bench/runs.py` for the layout and why the version is
@@ -20,8 +20,19 @@ docker compose run --rm bench --scenarios s4 --reps 1 --quick
 
 Scenario order is deliberate. S4 is the headline and runs first, while the machine is in
 whatever state the rest of the run will inherit rather than after twenty minutes of load.
-The measurement passes that instrument the applications (`memory`, `callgraph`, `profile`)
-run last, so nothing they perturb is still being timed.
+S10 follows it, because it is the same workload read through the kernel's CPU counter
+instead of a latency clock, and S9 follows S3 for the same reason. The measurement passes
+that instrument the applications (`memory`, `callgraph`, `profile`) run last, so nothing
+they perturb is still being timed.
+
+### Where the results go
+
+One directory per run, `results/v<version>/<UTC timestamp>/`, with the version read from the
+running armasec-lite image. A flat directory overwrote the evidence on every run, which made
+it impossible to say whether a number came from before or after a change.
+`results/index.json` carries one entry per run, so a directory of timestamped runs stays
+navigable without opening every file in it. The hostname is not in the path; it is in every
+result file's provenance block, which is where a reader comparing two machines will look.
 
 The run refuses to start if the two application containers do not carry identical CPU and
 memory limits, which `report.provenance` checks. An unfair comparison is worse than no
@@ -38,8 +49,23 @@ import traceback
 
 from bench import report, runs, scenarios
 
-#: Runs in this order for the reasons given in the module docstring.
-DEFAULT_ORDER = ("s4", "s3", "s1", "s2", "s8", "footprint", "memory", "callgraph", "profile")
+#: Runs in this order for the reasons given in the module docstring. S10 sits beside S4
+#: because it is the same workload seen through a different counter, and S9 and S11 are
+#: grouped with it so the three CPU measurements share one thermal neighbourhood.
+DEFAULT_ORDER = (
+    "s4",
+    "s10",
+    "s3",
+    "s9",
+    "s1",
+    "s2",
+    "s8",
+    "s11",
+    "footprint",
+    "memory",
+    "callgraph",
+    "profile",
+)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -103,6 +129,15 @@ def main(argv: list[str]) -> int:
     # run's files, which is the whole point of the layout: every run is kept.
     run_directory = runs.allocate_run_directory(args.out, provenance)
 
+    # Three facts the provenance block does not otherwise carry, so that a single result file
+    # read on its own says which run it belongs to and under what settings it was taken. The
+    # id is the directory that was actually allocated rather than a second derivation of it,
+    # and the version comes from the same call the directory was named by, so a file cannot
+    # name a run or a version that its own path denies.
+    provenance["run_id"] = os.path.basename(run_directory)
+    provenance["armasec_lite_version"] = runs.library_version(provenance)
+    provenance["quick_mode"] = args.quick
+
     print("armasec-lite comparison harness")
     print(f"  host          {provenance['hostname']} ({provenance['cpu_count']} cores)")
     print(f"  cpu           {provenance['cpu_model']}")
@@ -114,6 +149,10 @@ def main(argv: list[str]) -> int:
     limits = provenance["app_container_limits"]["legacy"]
     print(f"  app limits    {limits['cpus']} cpus, {limits['mem_limit_bytes'] / 1e6:.0f}MB (both)")
     print(f"  repetitions   {args.reps}{' (quick mode)' if args.quick else ''}")
+    print(
+        f"  cgroup        {provenance['cgroup']['version']} at "
+        f"{provenance['cgroup']['root_mounted_at']}"
+    )
     print(f"  results       {os.path.relpath(run_directory, args.out)}")
     print()
 

@@ -1,6 +1,6 @@
 {
   "schema": "armasec-lite-comparison-index/1",
-  "generated_utc": "2026-09-05T01:15:52+00:00",
+  "generated_utc": "2026-09-05T02:24:06+00:00",
   "note": "Derived in full from the result files under this directory. Every number here is recomputed from those files whenever the index is rebuilt, so the index is never a second source of truth.",
   "scenario_files": [
     "s1_cold_start",
@@ -8,19 +8,122 @@
     "s3_warm_flood",
     "s4_event_loop_blocking",
     "s8_failing_provider",
+    "s9_cpu_per_request",
+    "s10_cpu_during_cold_load",
+    "s11_idle_cpu",
     "footprint",
     "memory",
     "call_graph",
     "profile_sampling"
   ],
   "version_count": 1,
-  "run_count": 2,
+  "run_count": 3,
   "versions": [
     {
       "version": "0.1.0",
       "directory": "v0.1.0",
-      "run_count": 2,
+      "run_count": 3,
       "runs": [
+        {
+          "run_id": "2026-09-05T01-55-12Z",
+          "path": "v0.1.0/2026-09-05T01-55-12Z",
+          "complete": false,
+          "scenarios": [
+            "s9_cpu_per_request",
+            "s10_cpu_during_cold_load",
+            "s11_idle_cpu"
+          ],
+          "missing": [
+            "s1_cold_start",
+            "s2_request_amplification",
+            "s3_warm_flood",
+            "s4_event_loop_blocking",
+            "s8_failing_provider",
+            "footprint",
+            "memory",
+            "call_graph",
+            "profile_sampling"
+          ],
+          "provenance": {
+            "timestamp_utc": "2026-09-05T01:55:12+00:00",
+            "hostname": "raton-actions-00",
+            "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+            "cpu_count": 8,
+            "memory_total_bytes": 33284620288,
+            "kernel": "6.8.0-134-generic",
+            "operating_system": "Ubuntu 24.04.4 LTS",
+            "docker_version": "29.6.0",
+            "docker_api_version": "1.55",
+            "repetitions": 5,
+            "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+            "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+            "keycloak_repo_digests": [
+              "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+            ],
+            "library_versions": {
+              "legacy": "legacy 3.0.3",
+              "lite": "lite 0.1.0"
+            },
+            "app_container_limits": {
+              "identical": true,
+              "legacy": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-legacy",
+                "image_id": "sha256:3ea7b80a8680fecb665367a2561c17686c0ce4042caae04423f5a735bd5a453b"
+              },
+              "lite": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-lite",
+                "image_id": "sha256:43636120e7c93c5a7e600ea314bf69d328a2d116f91867ded1d943f49dc2e405"
+              }
+            },
+            "cgroup": {
+              "version": "v2",
+              "root_mounted_at": "/host/sys/fs/cgroup",
+              "memory_peak_resettable": false
+            },
+            "run_id": "2026-09-05T01-55-12Z",
+            "armasec_lite_version": "0.1.0",
+            "quick_mode": false
+          },
+          "verdicts": {
+            "s9_cpu_per_request": {
+              "100rps_cpu_ms_per_request": "armasec-lite 1.19x lower, ranges disjoint",
+              "100rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.20x lower, ranges disjoint",
+              "100rps_anon_max_bytes": "armasec-lite 1.06x lower, ranges disjoint",
+              "100rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "300rps_cpu_ms_per_request": "armasec-lite 1.06x lower, ranges disjoint",
+              "300rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.06x lower, ranges disjoint",
+              "300rps_anon_max_bytes": "armasec-lite 1.06x lower, ranges disjoint",
+              "300rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "600rps_cpu_ms_per_request": "armasec-lite 1.20x lower, ranges disjoint",
+              "600rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.22x lower, ranges disjoint",
+              "600rps_anon_max_bytes": "armasec-lite 1.06x lower, ranges disjoint",
+              "600rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "900rps_cpu_ms_per_request": "armasec-lite 1.19x lower, ranges disjoint",
+              "900rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.19x lower, ranges disjoint",
+              "900rps_anon_max_bytes": "armasec-lite 1.06x lower, ranges disjoint",
+              "900rps_anon_climb_bytes": "within noise (repetition ranges overlap)"
+            },
+            "s10_cpu_during_cold_load": {
+              "legacy_shape": "upstream armasec: 0.057 cores during the stall against a 0.073 core baseline (below baseline) while /health p99 was 1064ms",
+              "lite_shape": "armasec-lite: 0.080 cores during the stall against a 0.118 core baseline (below baseline) while /health p99 was 7ms",
+              "cores_during_stall": "ranges disjoint"
+            },
+            "s11_idle_cpu": {
+              "idle_cpu": "upstream 0.152% of a core vs armasec-lite 0.139%, over one 30 second window, with 0 and 0 health probes in them"
+            }
+          },
+          "summary": {}
+        },
         {
           "run_id": "2026-09-05T01-08Z-raton-actions-00",
           "path": "v0.1.0/2026-09-05T01-08Z-raton-actions-00",
@@ -33,6 +136,9 @@
             "s2_request_amplification",
             "s3_warm_flood",
             "s4_event_loop_blocking",
+            "s9_cpu_per_request",
+            "s10_cpu_during_cold_load",
+            "s11_idle_cpu",
             "footprint",
             "memory",
             "call_graph",
@@ -110,7 +216,10 @@
             "profile_sampling"
           ],
           "missing": [
-            "s8_failing_provider"
+            "s8_failing_provider",
+            "s9_cpu_per_request",
+            "s10_cpu_during_cold_load",
+            "s11_idle_cpu"
           ],
           "provenance": {
             "timestamp_utc": "2026-09-05T00:33:09+00:00",

@@ -142,13 +142,14 @@ its mind.
 ## Benchmarks
 
 ```bash
-just compare-legacy                                  # everything, five repetitions, ~35 minutes
+just compare-legacy                                  # everything, five repetitions, ~1 hour
 just compare-legacy REPS=1 SCENARIOS=s4 QUICK=--quick  # check the harness, do not cite the output
 ```
 
 The recipe builds both application images and the bench image, brings the stack up on
-health checks, runs the scenarios, writes one JSON file per scenario into `results/`, prints
-a summary and tears the stack down.
+health checks, runs the scenarios, writes one JSON file per scenario into
+`results/v<version>/<run-id>/`, rebuilds `results/index.json` from the whole results tree,
+prints a summary and tears the stack down.
 
 **Every number published about this project comes out of one of those files.** No figure is
 hand-authored. Where a scenario shows no difference, the file says so and the difference is
@@ -161,6 +162,9 @@ not claimed; where upstream wins, the file records that it won.
 | `s1_cold_start.json` | S1 | Time to first response after a restart, at concurrency 1 to 64 |
 | `s2_request_amplification.json` | S2 | OIDC fetches counted at the proxy for N distinct `lockdown()` scope sets |
 | `s8_failing_provider.json` | S8 | Outbound JWKS fetches while the provider fails and unknown key ids arrive |
+| `s9_cpu_per_request.json` | S9 | CPU microseconds and memory per warm request, at the S3 rate ladder |
+| `s10_cpu_during_cold_load.json` | S10 | CPU consumed while the S4 cold OIDC load is in flight |
+| `s11_idle_cpu.json` | S11 | CPU consumed by an idle container with no traffic |
 | `footprint.json` | | Installed distributions per arm, read from the running containers |
 | `memory.json` | | Container RSS idle, warm and under load, plus per-library import cost |
 | `call_graph.json` | | Static call sites and per-request call counts on the authentication path |
@@ -184,6 +188,66 @@ either process and cannot be confounded by the cost of authentication itself, be
 requests being timed are not authenticated.
 
 `profile_sampling.json` corroborates it from inside by a different method, and the two agree.
+
+### CPU, and why it is a different question from latency
+
+S3 says one arm is slower per request and `call_graph.json` says one arm makes more calls per
+request. Neither is a measurement of work. A call count is a proxy for it and a latency is
+work plus everything the request waited for. **S9 measures the work itself**: the CPU
+microseconds the kernel charged to each application container across a measurement window,
+divided by the requests served in it. If that comes out flat while the latencies differ, the
+latency difference is not compute, and the call-count reasoning does not explain it. The
+scenario is built so that answer can win.
+
+**S10 is the sharper use.** Blocking on network I/O and being CPU-saturated produce the same
+picture in a latency chart and are completely different problems. CPU separates them: a
+process blocked in a socket read burns almost nothing while its latency is terrible, and a
+saturated one burns a whole core. Sampling both containers' CPU during the S4 cold load
+therefore says whether upstream's one second stall is idle waiting or overload, which is a
+stronger claim than the latency series alone can support.
+
+**S11 is a null result by design.** Both containers, no traffic, one window. Anything other
+than approximately zero is a finding.
+
+#### How the counters are read
+
+cgroup v2, from the host's `/sys/fs/cgroup` bind-mounted read only into the bench container:
+`cpu.stat` for `usage_usec`, `user_usec`, `system_usec` and the throttling counters, and
+`memory.current`, `memory.peak` and `memory.stat` beside it. Counters are cumulative, so a
+window's cost is the difference between a reading at each end of it; S10 additionally samples
+every 50ms, because its subject is a shape rather than a total.
+
+Not `docker exec cat`. An exec'd process joins the target container's cgroup and charges its
+own CPU to the counter being read, in the arm being sampled and not in the other one, which
+is the exact quantity S9 compares. Not the daemon's stats endpoint either: it does not expose
+`memory.peak` and a non-streaming call takes about a second to answer, which cannot resolve a
+one second stall.
+
+Memory is reported as `memory.current`, as `anon`, and as `memory.current` less
+`inactive_file`, which is the figure `memory.json` reports through the daemon.
+`memory.current` includes page cache, so two containers that have read different amounts of
+their own image differ in it for reasons that have nothing to do with the libraries they run;
+`anon` is the number to judge accumulation by.
+
+#### The health probe was costing 9.6% of a core
+
+The application health check used to be
+`python -c 'import urllib.request; urllib.request.urlopen(...)'` on a three second interval.
+Measured inside the container, that costs **287ms of CPU per probe**, almost all of it
+importing `ssl`, `email` and `http.client` into a fresh interpreter, and Docker charges it to
+the container it probes. It never biased the latency comparison, because the two arms carry
+the identical probe through a YAML anchor, and it is invisible in a latency measurement. It
+is not invisible in a CPU one: 287ms landing unpredictably inside a ten second window is a
+larger and noisier term than the per-request work S9 exists to measure, and it made the first
+idle measurement read 12% of a core for both arms.
+
+The probe now speaks HTTP/1.0 over a bare socket, which costs 93ms because it imports
+`socket` and nothing else, and runs on a sixty second interval with a one second
+`start_interval`, so Docker still probes every second while a container is starting, which is
+what `up --wait`, `depends_on: service_healthy` and the restarts between repetitions need.
+Idle CPU fell from 9.6% of a core to 0.15%. S9, S10 and S11 count the probes that landed in
+their window from the daemon's health log and report the number, so any residue is visible
+rather than assumed away.
 
 ### Methodology
 
@@ -219,16 +283,41 @@ worse than no comparison, and a warning in a log is not a control.
 
 Every result file carries the same block: UTC timestamp, hostname, CPU model, core count,
 kernel, Docker version, both containers' CPU and memory limits, repetition count, the
-Keycloak image and its digest, and the resolved version of both libraries. Absolute numbers
+Keycloak image and its digest, the resolved version of both libraries, the cgroup version and
+mount point, and whether `memory.peak` was resettable on this kernel. Absolute numbers
 describe one machine running Docker. The ratio between the two arms is the transferable part.
+
+### Where results are written
+
+One directory per run:
+
+```
+results/
+  index.json                  rebuilt from the tree below it, newest first
+  v0.1.0/
+    2026-09-05T01-42-07Z/     a UTC timestamp to the second, and nothing else
+      s9_cpu_per_request.json
+      ...
+```
+
+The version comes from the running armasec-lite image rather than from `pyproject.toml`, so
+a run is filed under the version that actually produced its numbers. A flat directory
+overwrote the evidence on every run, which made it impossible to say whether a figure came
+from before or after a change.
+
+The hostname is deliberately not in the path. It is in every result file's provenance block,
+which is where a reader comparing two machines will look, and keeping it out of the tree
+stops machine names leaking into the repository.
 
 ### The bench container
 
 It sits on the compose network and addresses services by name, so its requests do not
 traverse the host's published ports. It gets the Docker socket for two reasons and no
 others: three scenarios restart application containers between repetitions, and provenance
-reads container limits and image digests from the daemon. It is standard library only and
-imports neither library under test.
+reads container limits and image digests from the daemon. It gets the host's cgroup v2
+hierarchy read only, so the CPU scenarios can read each application container's kernel
+counters without charging the read to the container. It is standard library only and imports
+neither library under test.
 
 `app/probe.py` is baked into the application image and run with `docker exec`. It measures
 the things that are properties of an environment rather than of a running server: import

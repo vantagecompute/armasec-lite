@@ -12,6 +12,10 @@ This module also owns the Docker API client, because collecting provenance is mo
 the harness uses Docker for. The scenarios borrow it to restart application containers,
 which is the other part.
 
+It writes result files and nothing else. Which directory a run's files go into, and the
+index over them, belong to `bench/runs.py`, where the index is derived in full from the
+result files every time it is built. Nothing here hand-copies a number into an index.
+
 ### Reporting spread
 
 `across_reps` reports the median of the repetitions and keeps every individual value.
@@ -31,8 +35,11 @@ import datetime
 import http.client
 import json
 import os
+import re
 import socket
 from typing import Any
+
+from bench import cgroup
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -182,6 +189,39 @@ class Docker:
             The daemon's stats document.
         """
         return self.call("GET", f"/containers/{self.container_id(service)}/stats?stream=false")
+
+    def health_probes_since(self, service: str, wall: float) -> int:
+        """
+        Count the health probes the daemon has run on a container since a moment in time.
+
+        Docker charges a health probe's CPU to the container it probes, so a probe landing
+        inside a measurement window is CPU the application did not spend. The daemon keeps
+        the last five probe records with their start times, which at the sixty second probe
+        interval this stack uses covers any window a scenario measures several times over.
+
+        Args:
+            service: The compose service name.
+            wall:    A Unix timestamp. Probes started at or after it are counted.
+
+        Returns:
+            How many probes started inside the window. Zero when the daemon reports no
+            health state at all, which is the honest answer for a container without a
+            health check.
+        """
+        health = (self.inspect(service).get("State") or {}).get("Health") or {}
+        counted = 0
+        for entry in health.get("Log") or []:
+            # RFC3339 with nanoseconds, which `fromisoformat` will not take. Trimming the
+            # fraction to microseconds loses nothing: the comparison is against a window
+            # that is seconds long.
+            stamp = re.sub(r"(\.\d{6})\d+", r"\1", str(entry.get("Start", "")))
+            try:
+                started = datetime.datetime.fromisoformat(stamp)
+            except ValueError:
+                continue
+            if started.timestamp() >= wall:
+                counted += 1
+        return counted
 
     def raw_post(self, path: str, body: Any, timeout: float = 180.0) -> bytes:
         """
@@ -368,6 +408,21 @@ def provenance(docker: Docker, versions: dict[str, str], reps: int) -> dict[str,
     keycloak = docker.inspect("keycloak")
     image = docker.call("GET", f"/images/{_quote(keycloak['Image'])}/json")
 
+    # The CPU scenarios read the kernel's own per-container counters, so which hierarchy is
+    # mounted and whether `memory.peak` can be zeroed are facts about the run, not about the
+    # code, and belong beside the kernel version rather than inside one scenario's config.
+    cgroups: dict[str, Any] = {
+        "version": cgroup.cgroup_version(),
+        "root_mounted_at": cgroup.CGROUP_ROOT,
+        "memory_peak_resettable": None,
+    }
+    try:
+        cgroups["memory_peak_resettable"] = cgroup.Reader(
+            docker.container_id("app-legacy")
+        ).reset_peak()
+    except (RuntimeError, OSError):
+        cgroups["memory_peak_resettable"] = None
+
     return {
         "timestamp_utc": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "hostname": info.get("Name"),
@@ -384,6 +439,7 @@ def provenance(docker: Docker, versions: dict[str, str], reps: int) -> dict[str,
         "keycloak_repo_digests": image.get("RepoDigests", []),
         "library_versions": versions,
         "app_container_limits": {"identical": True, "legacy": legacy_limits, "lite": lite_limits},
+        "cgroup": cgroups,
     }
 
 

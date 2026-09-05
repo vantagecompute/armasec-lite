@@ -334,7 +334,7 @@ compare-legacy-parity:
 # rather than sleeps, runs every scenario, writes one JSON file per scenario into a fresh
 # per-run directory under legacy_comparison_compose/results/v<version>/, rebuilds
 # results/index.json from the whole tree, prints a summary and tears the stack down. Takes
-# roughly forty minutes at the default five repetitions.
+# roughly an hour at the default five repetitions.
 #
 # Nothing is overwritten: every run keeps its own directory, named from its own provenance,
 # and every run is meant to be committed. Two runs of the same version tell you how much
@@ -343,7 +343,7 @@ compare-legacy-parity:
 # Nothing here is a shortcut around the ground rule: every number in the docs comes out of
 # one of the files this writes. Pass REPS=1 SCENARIOS=s4 QUICK=--quick to check that the
 # harness works without pretending the output is a measurement.
-compare-legacy REPS="5" SCENARIOS="s4,s3,s1,s2,s8,footprint,memory,callgraph,profile" QUICK="":
+compare-legacy REPS="5" SCENARIOS="s4,s10,s3,s9,s1,s2,s8,s11,footprint,memory,callgraph,profile" QUICK="":
     #!/usr/bin/env bash
     set -euo pipefail
     cd legacy_comparison_compose
@@ -359,7 +359,7 @@ compare-legacy REPS="5" SCENARIOS="s4,s3,s1,s2,s8,footprint,memory,callgraph,pro
     docker compose down -v
     echo
     echo "==> result files"
-    find results -name '*.json' | sort
+    find results -name '*.json' -printf '%10s  %p\n' | sort -k2
     exit $status
 
 # --- infrastructure ------------------------------------------------------------------

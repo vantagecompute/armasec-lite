@@ -10,7 +10,7 @@ library being measured:
 results/
   index.json
   v0.1.0/
-    2026-09-05T00-33Z-raton-actions-00/
+    2026-09-05T01-55-12Z/
       s1_cold_start.json
       ...
     <another run of the same version>/
@@ -27,6 +27,10 @@ Both the version and the run id come from the run's own provenance block, never 
 working tree. `pyproject.toml` can move on after a measurement is taken; the file records
 what was actually running.
 
+The run id is a UTC timestamp and nothing else. The host is not in the path: it is recorded
+in every result file's provenance block, which is where the generated pages read it from and
+where a reader comparing two machines will look for it.
+
 `index.json` is derived, in full, from the result files under it, every time it is built.
 Nothing is hand-copied into it. An index that carried its own numbers would be a second
 source of truth, free to drift from the results it claims to summarise, and the first
@@ -41,22 +45,23 @@ import os
 import re
 from typing import Any
 
-#: The nine scenario files a complete run writes, in the order the page presents them.
+#: The scenario files a complete run writes, in scenario order. A run holding a file that is
+#: not listed here is a run whose results the pages would silently omit, so the page
+#: generator refuses to build until the two agree.
 SCENARIO_FILES = (
     "s1_cold_start",
     "s2_request_amplification",
     "s3_warm_flood",
     "s4_event_loop_blocking",
     "s8_failing_provider",
+    "s9_cpu_per_request",
+    "s10_cpu_during_cold_load",
+    "s11_idle_cpu",
     "footprint",
     "memory",
     "call_graph",
     "profile_sampling",
 )
-
-#: Anything outside this set is replaced with a hyphen when a hostname becomes a path
-#: segment, so a run id is always safe as a directory name and as a URL fragment.
-_UNSAFE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
 def library_version(provenance: dict[str, Any]) -> str:
@@ -103,15 +108,25 @@ def run_id(provenance: dict[str, Any]) -> str:
     """
     Derive a run's identifier from what the run itself recorded.
 
-    A UTC timestamp to the minute plus the host the daemon reported, which is enough to tell
-    two runs apart by eye and enough to sort them. It is deliberately not a random id: a
-    reader should be able to look at a directory name and know when and where.
+    A UTC timestamp to the second, and nothing else. It is deliberately not a random id: a
+    reader should be able to look at a directory name and know when the run was taken.
+
+    The host used to be part of this, because it is what made a run unique across machines.
+    A path is a poor place to keep it: it leaks machine names into the repository tree and it
+    is noise to every reader who is not comparing two hosts. The host is still recorded in
+    every result file's provenance block, which is where the generated pages read it from, so
+    nothing is lost by taking it out of the path. Second precision is what replaces it: two
+    runs starting inside the same second on one machine is not a case worth engineering for,
+    and `allocate_run_directory` handles it anyway.
+
+    The colons an ISO timestamp would carry are written as hyphens, because a colon in a path
+    name is legal on Linux and a nuisance everywhere else.
 
     Args:
         provenance: The provenance block from any result file of the run.
 
     Returns:
-        An identifier of the shape `2026-09-05T00-33Z-raton-actions-00`.
+        An identifier of the shape `2026-09-05T01-55-12Z`.
 
     Raises:
         ValueError: The block carries no parseable timestamp.
@@ -123,18 +138,16 @@ def run_id(provenance: dict[str, Any]) -> str:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=datetime.UTC)
     moment = moment.astimezone(datetime.UTC)
-    host = _UNSAFE.sub("-", str(provenance.get("hostname") or "unknown-host")).strip("-")
-    return f"{moment.strftime('%Y-%m-%dT%H-%MZ')}-{host or 'unknown-host'}"
+    return moment.strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
 def allocate_run_directory(results_root: str, provenance: dict[str, Any]) -> str:
     """
     Choose, and create, the directory this run's files belong in.
 
-    The run id is minute-resolution, so two runs finishing on the same host inside the same
-    minute would otherwise collide and the second would overwrite the first. When the
-    derived name is taken, a numeric suffix is appended until it is not. Nothing existing is
-    ever written into.
+    The run id is a timestamp, so two runs starting inside the same second would otherwise
+    collide and the second would overwrite the first. When the derived name is taken, a
+    numeric suffix is appended until it is not. Nothing existing is ever written into.
 
     Args:
         results_root: The `results/` directory.

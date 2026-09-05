@@ -104,8 +104,27 @@ its own stall.
 | S6 | Keycloak realm key rotation mid-run | error count after rotation, time to recovery |
 | S7 | Malformed, expired, wrong-audience, wrong-issuer, insufficient-scope tokens | HTTP status from each service |
 | S8 | Provider returning 500s while unknown-`kid` tokens arrive | outbound requests counted at the proxy |
+| S9 | Warm steady state at the S3 rate ladder | CPU microseconds and memory per request, from cgroup v2 |
+| S10 | The S4 workload with both containers' CPU sampled at 50ms | whether the stall is a blocked process or a saturated one |
+| S11 | Both containers idle, no traffic | CPU consumed at rest, expected to be approximately zero |
 
-S4 remains the central result. S6 now rotates **real Keycloak realm keys** through the admin
+S4 remains the central result.
+
+S9, S10 and S11 were added because call counts and latency are both proxies for work and
+neither is the work itself. S9 answers the "does one library do more" question with the
+quantity that actually settles it, and it is built to be able to return a flat result, which
+would say the latency difference is not compute. S10 is the sharper use: a process blocked in
+a socket read and a process saturating its core look identical in a latency chart, and CPU
+separates them, so it says whether S4's stall is idle waiting or overload. S11 is a null
+result by design.
+
+Building them turned up a defect in the harness itself. The application health probe was
+`python -c 'import urllib.request; urllib.request.urlopen(...)'` on a three second interval,
+which costs 287ms of CPU per probe and which Docker charges to the container it probes: 9.6%
+of one core, burned continuously, in both arms. It never biased the latency comparison, since
+the two arms carry the identical probe, and it is invisible in a latency measurement. It is
+not invisible in a CPU one. The probe is now a bare socket check on a sixty second interval
+with a one second start interval, and idle CPU fell to 0.15% of a core. S6 now rotates **real Keycloak realm keys** through the admin
 API rather than swapping a fixture, which is a materially stronger demonstration: upstream
 caches the JWKS for the process lifetime and should 401 until restarted, while
 `armasec-lite` should recover within its refetch interval.
@@ -121,8 +140,10 @@ except for the documented `verify_issuer` difference, which gets its own explici
 
 ## Results
 
-Written to `legacy_comparison_compose/results/*.json` and committed, each carrying
-provenance: UTC timestamp, hostname, CPU model, kernel, Docker version, container resource
-limits, repetition count, the Keycloak image digest, and the resolved version of both
+Written to `legacy_comparison_compose/results/v<version>/<UTC timestamp>/*.json` and
+committed, with
+one entry per run in `results/index.json`, each file carrying provenance: UTC timestamp,
+hostname, CPU model, kernel, Docker version, container resource limits, repetition count, the
+Keycloak image digest, the cgroup version and mount point, and the resolved version of both
 libraries. Numbers describe one machine running Docker, and the documentation says so. The
 ratio between the two arms is the meaningful part, not the absolute milliseconds.
