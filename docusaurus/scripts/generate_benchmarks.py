@@ -93,6 +93,207 @@ SINGLE_OBSERVATION = ("profile_sampling", "call_graph")
 #: find the places a bare ratio would otherwise be published.
 RATIO = re.compile(r"\d+(?:\.\d+)?x\b")
 
+#: A rate in the S3 sweep is read as steady state only when each arm's p50 repeated to
+#: within this many percent of its own median across the run's repetitions. A median drawn
+#: from repetitions that disagreed by more than this is not describing a steady state, and
+#: the difference between two such medians is not a per-request cost, however confidently it
+#: can be quoted. The threshold is a line drawn by hand rather than a measured quantity, and
+#: the page says which rates it excluded and by how much they missed.
+STEADY_SPREAD_PCT = 10.0
+
+#: A quantity that moved by more than this many percent between two runs of the same version
+#: on the same machine is reported as not having reproduced. Also a line drawn by hand. Two
+#: runs cannot support a real threshold; what this number does is make the report of each row
+#: a consequence of the data rather than of how the row was described.
+REPRODUCTION_MOVEMENT_PCT = 10.0
+
+#: What kind of thing a tracked measurement is. `work` is a direct count of work done or a
+#: resource consumed: CPU time, calls, fetches, bytes, distributions. `latency` is a wall
+#: clock percentile, or a ratio of two of them. The reproducibility section groups its rows
+#: by this because it is the axis along which the two classes behave differently, and a
+#: reader deciding how much to trust a figure elsewhere on the page needs to know which class
+#: it belongs to.
+WORK = "work"
+LATENCY = "latency"
+
+#: The measurements the page sets one run against another on, as
+#: `(label, class, scenario file, path)`. The path is resolved inside a run's result file
+#: with `{arm}` replaced by each arm's name. A run that does not hold the file, or the
+#: measurement inside it, contributes no point rather than a zero, and a measurement held by
+#: fewer than two runs is listed as not yet compared rather than dropped. Nothing here is a
+#: threshold or a conclusion: the rows are chosen, the numbers and the verdicts on them are
+#: computed.
+REPRODUCIBILITY: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
+    (
+        "CPU per request, 100 rps offered",
+        WORK,
+        "s9_cpu_per_request",
+        ("measurements", "target_100_rps", "cpu_ms_per_request", "{arm}"),
+    ),
+    (
+        "CPU per request, 300 rps offered",
+        WORK,
+        "s9_cpu_per_request",
+        ("measurements", "target_300_rps", "cpu_ms_per_request", "{arm}"),
+    ),
+    (
+        "CPU per request, 600 rps offered",
+        WORK,
+        "s9_cpu_per_request",
+        ("measurements", "target_600_rps", "cpu_ms_per_request", "{arm}"),
+    ),
+    (
+        "CPU per request, 900 rps offered",
+        WORK,
+        "s9_cpu_per_request",
+        ("measurements", "target_900_rps", "cpu_ms_per_request", "{arm}"),
+    ),
+    (
+        "peak anonymous memory, 600 rps offered",
+        WORK,
+        "s9_cpu_per_request",
+        ("measurements", "target_600_rps", "anon_max_bytes", "{arm}"),
+    ),
+    (
+        "rate actually served, 900 rps offered",
+        WORK,
+        "s9_cpu_per_request",
+        ("measurements", "target_900_rps", "achieved_rps", "{arm}"),
+    ),
+    (
+        "CPU used while the cold fetch stalls",
+        WORK,
+        "s10_cpu_during_cold_load",
+        ("measurements", "cpu_ms_during_stall", "{arm}"),
+    ),
+    (
+        "cores used while the cold fetch stalls",
+        WORK,
+        "s10_cpu_during_cold_load",
+        ("measurements", "cores_during_stall", "{arm}"),
+    ),
+    (
+        "idle CPU per second",
+        WORK,
+        "s11_idle_cpu",
+        ("measurements", "{arm}", "cpu_ms_per_second_idle"),
+    ),
+    (
+        "OIDC fetches at 20 scope sets",
+        WORK,
+        "s2_request_amplification",
+        ("measurements", "scope_sets_20", "total_oidc", "{arm}"),
+    ),
+    (
+        "installed distributions",
+        WORK,
+        "footprint",
+        ("measurements", "{arm}", "distribution_count"),
+    ),
+    (
+        "calls serving one warm request",
+        WORK,
+        "call_graph",
+        ("measurements", "{arm}", "warm_total_calls"),
+    ),
+    (
+        "functions reachable from the entry point",
+        WORK,
+        "call_graph",
+        ("measurements", "{arm}", "static", "reachable_from_call"),
+    ),
+    (
+        "loop thread samples inside a blocking HTTP client",
+        WORK,
+        "profile_sampling",
+        ("measurements", "{arm}", "loop_thread_samples_in_blocking_http_client"),
+    ),
+    (
+        "JWKS fetches while the provider fails",
+        WORK,
+        "s8_failing_provider",
+        ("measurements", "jwks_fetches_during_flood", "{arm}"),
+    ),
+    (
+        "p50 latency, 100 rps offered",
+        LATENCY,
+        "s9_cpu_per_request",
+        ("measurements", "target_100_rps", "latency_p50_ms", "{arm}"),
+    ),
+    (
+        "p50 latency, 300 rps offered",
+        LATENCY,
+        "s9_cpu_per_request",
+        ("measurements", "target_300_rps", "latency_p50_ms", "{arm}"),
+    ),
+    (
+        "p50 latency, 600 rps offered",
+        LATENCY,
+        "s9_cpu_per_request",
+        ("measurements", "target_600_rps", "latency_p50_ms", "{arm}"),
+    ),
+    (
+        "p50 latency, 900 rps offered",
+        LATENCY,
+        "s9_cpu_per_request",
+        ("measurements", "target_900_rps", "latency_p50_ms", "{arm}"),
+    ),
+    (
+        "p99 latency, 600 rps offered",
+        LATENCY,
+        "s9_cpu_per_request",
+        ("measurements", "target_600_rps", "latency_p99_ms", "{arm}"),
+    ),
+    (
+        "p99 latency, 900 rps offered",
+        LATENCY,
+        "s9_cpu_per_request",
+        ("measurements", "target_900_rps", "latency_p99_ms", "{arm}"),
+    ),
+    (
+        "/health p99 while the cold fetch stalls",
+        LATENCY,
+        "s10_cpu_during_cold_load",
+        ("measurements", "health_p99_during_stall_ms", "{arm}"),
+    ),
+    (
+        "the cold authenticated request itself",
+        LATENCY,
+        "s10_cpu_during_cold_load",
+        ("measurements", "cold_auth_request_ms", "{arm}"),
+    ),
+    (
+        "S3 p50 at 600 rps offered",
+        LATENCY,
+        "s3_warm_flood",
+        ("measurements", "target_600_rps", "p50_ms", "{arm}"),
+    ),
+    (
+        "S3 p99 at 900 rps offered",
+        LATENCY,
+        "s3_warm_flood",
+        ("measurements", "target_900_rps", "p99_ms", "{arm}"),
+    ),
+    (
+        "S4 worst /health latency",
+        LATENCY,
+        "s4_event_loop_blocking",
+        ("measurements", "worst_health_latency_ms", "{arm}"),
+    ),
+    (
+        "S1 first response, 1 concurrent",
+        LATENCY,
+        "s1_cold_start",
+        ("measurements", "concurrency_1", "first_response_ms", "{arm}"),
+    ),
+    (
+        "S1 first response, 64 concurrent",
+        LATENCY,
+        "s1_cold_start",
+        ("measurements", "concurrency_64", "first_response_ms", "{arm}"),
+    ),
+)
+
 
 class GenerationError(RuntimeError):
     """The results tree cannot produce a complete set of pages."""
@@ -164,6 +365,69 @@ def spread(block: dict[str, Any], render) -> str:
     if low == high:
         return f"{render(median)} (every repetition)"
     return f"{render(median)} (range {render(low)} to {render(high)})"
+
+
+def relative_spread(block: dict[str, Any]) -> float:
+    """
+    Measure how far a set of repetitions disagreed with itself, as a percentage.
+
+    Computed from `min`, `max` and `median` rather than read from the result file's own
+    `spread_pct_of_median`, so it is defined for any block carrying a repetition range and
+    cannot silently differ from the range the page prints beside it.
+
+    Args:
+        block: An `across_reps` block carrying `median`, `min` and `max`.
+
+    Returns:
+        The observed range as a percentage of the median, or zero when the median is zero.
+    """
+    median = float(block["median"])
+    if median == 0.0:
+        return 0.0
+    return (float(block["max"]) - float(block["min"])) / median * 100.0
+
+
+def percent_range(values: Iterable[float]) -> str:
+    """
+    Render a set of percentages as a range, collapsing one that rounds to a single value.
+
+    Args:
+        values: The percentages.
+
+    Returns:
+        `"9 percent"` or `"9 to 18 percent"`.
+
+    Raises:
+        ValueError: There were no values, which every caller handles as its own case.
+    """
+    numbers = list(values)
+    if not numbers:
+        raise ValueError("percent_range() has nothing to render")
+    low = f"{min(numbers):.0f}"
+    high = f"{max(numbers):.0f}"
+    return f"{low} percent" if low == high else f"{low} to {high} percent"
+
+
+def listed(items: Iterable[str]) -> str:
+    """
+    Join phrases into an English list.
+
+    Args:
+        items: The phrases, already formatted.
+
+    Returns:
+        `"a"`, `"a and b"`, or `"a, b and c"`.
+
+    Raises:
+        ValueError: The list was empty, which every caller here treats as its own case and
+            none of them should be reaching this function with.
+    """
+    values = list(items)
+    if not values:
+        raise ValueError("listed() has nothing to list")
+    if len(values) == 1:
+        return values[0]
+    return ", ".join(values[:-1]) + " and " + values[-1]
 
 
 def table(header: Iterable[str], rows: Iterable[Iterable[str]]) -> str:
@@ -557,6 +821,304 @@ injected delay, the same measurement would report roughly {projected(lower)} at 
 per fetch and roughly {projected(upper)} at {count(upper)} ms per fetch, with neither library
 behaving any differently. A reader quoting the multiple is quoting the harness's dial. The
 invariant in the paragraph above is the part that survives a change of provider."""
+
+
+# --------------------------------------------------------------------------------------
+# Setting one run against another
+# --------------------------------------------------------------------------------------
+
+
+def tracked_quantity(
+    document: dict[str, Any], path: tuple[str, ...], source: str
+) -> tuple[float, bool] | None:
+    """
+    Reduce one run's measurement of a tracked quantity to a single comparable number.
+
+    The comparable number is normally the ratio between the arms, because that is what this
+    page publishes and therefore what a reader would carry away. Where armasec-lite measured
+    zero the ratio does not exist, and the upstream arm's own value is used instead rather
+    than the row being dropped: a count that is zero on one side is exactly the kind of exact
+    result worth checking for reproduction.
+
+    Args:
+        document: A parsed result file.
+        path:     The path to the measurement, with `{arm}` standing in for the arm name.
+        source:   The file, for error messages.
+
+    Returns:
+        The comparable number and whether it is a ratio, or `None` when this file does not
+        hold the measurement.
+    """
+    values: dict[str, float] = {}
+    for arm in ARMS:
+        cursor: Any = document
+        for part in path:
+            key = arm if part == "{arm}" else part
+            if not isinstance(cursor, dict) or key not in cursor:
+                return None
+            cursor = cursor[key]
+        if isinstance(cursor, dict):
+            if "median" not in cursor:
+                return None
+            values[arm] = float(cursor["median"])
+        elif isinstance(cursor, bool) or not isinstance(cursor, (int, float)):
+            raise GenerationError(f"{source}: {'/'.join(path)} is not a number")
+        else:
+            values[arm] = float(cursor)
+    if values["lite"] == 0.0:
+        return values["legacy"], False
+    return values["legacy"] / values["lite"], True
+
+
+def render_quantity(value: float, is_ratio: bool) -> str:
+    """
+    Format a tracked quantity for a table cell.
+
+    Args:
+        value:    The comparable number.
+        is_ratio: Whether it is a ratio between the arms or a bare upstream value.
+
+    Returns:
+        The formatted number.
+    """
+    if is_ratio:
+        return f"{value:,.3f}x"
+    return count(value)
+
+
+def reproduction_rows(index: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    """
+    Compare the oldest and newest run that measured each tracked quantity.
+
+    Args:
+        index: The loaded index, with every run's documents attached.
+
+    Returns:
+        The comparable rows, and the labels of the quantities only one run measured.
+    """
+    runs = [run for version in index["versions"] for run in version["runs"]]
+    runs.sort(key=lambda run: str(provenance_of(run).get("timestamp_utc", "")))
+
+    rows: list[dict[str, Any]] = []
+    uncompared: list[str] = []
+    for label, kind, stem, path in REPRODUCIBILITY:
+        seen: list[tuple[dict[str, Any], float, bool]] = []
+        for run in runs:
+            document = run["documents"].get(stem)
+            if document is None:
+                continue
+            found = tracked_quantity(document, path, f"{run['label']}/{stem}.json")
+            if found is not None:
+                seen.append((run, found[0], found[1]))
+        if len(seen) < 2:
+            uncompared.append(label)
+            continue
+        first_run, first, is_ratio = seen[0]
+        last_run, last, _ = seen[-1]
+        if first == last:
+            movement: float | None = 0.0
+        elif first == 0.0:
+            movement = None
+        else:
+            movement = abs(last - first) / abs(first) * 100.0
+        rows.append(
+            {
+                "label": label,
+                "kind": kind,
+                "first_run": first_run,
+                "last_run": last_run,
+                "first": first,
+                "last": last,
+                "is_ratio": is_ratio,
+                "movement": movement,
+                "reproduced": movement is not None and movement <= REPRODUCTION_MOVEMENT_PCT,
+            }
+        )
+    return rows, uncompared
+
+
+def movement_cell(row: dict[str, Any]) -> str:
+    """
+    Say how far one quantity moved between the two runs that measured it.
+
+    Args:
+        row: A row from `reproduction_rows`.
+
+    Returns:
+        The formatted movement.
+    """
+    if row["movement"] is None:
+        return "**moved off zero, no percentage defined**"
+    if row["movement"] == 0.0:
+        return "identical"
+    return f"{row['movement']:,.1f} percent"
+
+
+def reproducibility_section(index: dict[str, Any]) -> str:
+    """
+    Write the section that reports which measurements survived being taken twice.
+
+    This is a comparison, so it exists only when there is something to compare: two runs
+    holding the same measurement. Everything in it is computed from the committed result
+    files, including the sentence that generalises across the rows, which is assembled from
+    the worst movement in each class rather than written in advance. A generalisation written
+    in advance is how the claim this section replaced came to outlive its evidence.
+
+    Args:
+        index: The loaded index.
+
+    Returns:
+        Markdown for the section, or an empty string when fewer than two runs hold any
+        tracked measurement in common.
+    """
+    if index["run_count"] < 2:
+        return ""
+    rows, uncompared = reproduction_rows(index)
+    if not rows:
+        return ""
+
+    labels = sorted(
+        {row["first_run"]["label"] for row in rows} | {r["last_run"]["label"] for r in rows}
+    )
+    hosts = sorted(
+        {str(provenance_of(row["first_run"]).get("hostname", "?")) for row in rows}
+        | {str(provenance_of(row["last_run"]).get("hostname", "?")) for row in rows}
+    )
+
+    body_rows = []
+    for kind in (WORK, LATENCY):
+        for row in rows:
+            if row["kind"] != kind:
+                continue
+            body_rows.append(
+                [
+                    row["label"],
+                    "work done" if kind == WORK else "latency",
+                    render_quantity(row["first"], row["is_ratio"]),
+                    render_quantity(row["last"], row["is_ratio"]),
+                    movement_cell(row),
+                    "yes" if row["reproduced"] else "**no**",
+                ]
+            )
+
+    measured = [row for row in rows if row["movement"] is not None]
+    work = [row for row in measured if row["kind"] == WORK]
+    latency = [row for row in measured if row["kind"] == LATENCY]
+
+    def worst(group: list[dict[str, Any]]) -> dict[str, Any] | None:
+        return max(group, key=lambda row: float(row["movement"])) if group else None
+
+    worst_work = worst(work)
+    worst_latency = worst(latency)
+    failures = [row for row in rows if not row["reproduced"]]
+
+    if worst_work is None or worst_latency is None:
+        finding = (
+            "Only one of the two classes has been measured twice so far, so these rows "
+            "cannot yet say whether the classes behave differently."
+        )
+    elif float(worst_work["movement"]) < float(worst_latency["movement"]):
+        finding = (
+            f"**The direct measurements of work held tighter than the latency ones.** The "
+            f"widest a work measurement moved was {worst_work['movement']:,.1f} percent "
+            f"({worst_work['label']}). The widest a latency measurement moved was "
+            f"{worst_latency['movement']:,.1f} percent ({worst_latency['label']}), which is "
+            f"{float(worst_latency['movement']) / max(float(worst_work['movement']), 1e-9):,.0f} "
+            "times as far."
+        )
+    else:
+        finding = (
+            f"**On these runs the two classes did not separate.** The widest a work "
+            f"measurement moved was {worst_work['movement']:,.1f} percent "
+            f"({worst_work['label']}), against {worst_latency['movement']:,.1f} percent for "
+            f"the widest latency measurement ({worst_latency['label']}). Nothing here "
+            "supports treating one class as sturdier than the other."
+        )
+
+    if failures:
+        failed = (
+            f"{len(failures)} of the {len(rows)} rows moved by more than "
+            f"{REPRODUCTION_MOVEMENT_PCT:g} percent and "
+            + ("is" if len(failures) == 1 else "are")
+            + " reported as not having reproduced: "
+            + listed(row["label"] for row in failures)
+            + "."
+        )
+    else:
+        failed = (
+            f"Every one of the {len(rows)} rows moved by less than "
+            f"{REPRODUCTION_MOVEMENT_PCT:g} percent."
+        )
+
+    not_yet = (
+        (
+            "\n**Most of this page has been measured once.** The quantities below are "
+            "tracked here and are held by only one committed run, so nothing on this page "
+            "says whether they would come back the same: "
+            + ", ".join(f"`{label}`" for label in uncompared)
+            + ". They are not weaker measurements than the ones above; they are unreplicated "
+            "ones, which is a different and less comfortable thing. A count that has been "
+            "taken once is still a count, and a latency ratio that has been taken once is "
+            "still a latency ratio.\n"
+        )
+        if uncompared
+        else ""
+    )
+
+    host_line = (
+        f"on `{escape(hosts[0])}`"
+        if len(hosts) == 1
+        else "on " + listed(f"`{escape(host)}`" for host in hosts)
+    )
+
+    return f"""## What reproduces, and what does not
+
+**This is the most useful thing this harness has produced, and it is worth more than any
+single figure above.** Every number on this page is one machine's answer on one afternoon.
+Setting two runs against each other is the only measurement here that says how much of that
+answer was the libraries and how much was the machine.
+
+The rows below are every quantity this page tracks that at least two committed runs
+measured, {host_line}. Each is compared between the oldest and newest run that recorded it,
+{listed(f"`{escape(label)}`" for label in labels)}. The comparison is between the two arms'
+ratio in each run, because that ratio is what this page publishes; where armasec-lite
+measured zero and no ratio exists, the upstream arm's own value is compared instead.
+
+{
+        table(
+            [
+                "Quantity",
+                "What it measures",
+                "earlier run",
+                "later run",
+                "movement",
+                f"within {REPRODUCTION_MOVEMENT_PCT:g} percent",
+            ],
+            body_rows,
+        )
+    }
+{finding} {failed}
+
+**Why the two classes might be expected to differ.** CPU time, call counts, fetch counts and
+byte counts are direct measurements of work performed. A latency percentile is that same work
+plus queueing, plus scheduling, plus whatever else the machine was doing inside the same
+window. A ratio of two latencies is worse again, because it divides one noisy number by
+another and both noises land in the answer. That is a reason to expect the pattern, not
+evidence for it; the evidence is the table, and the table covers only the scenarios that have
+been run more than once. The practical reading is the same either way: where a figure
+elsewhere on this page rests on a count or on measured CPU time, it is the kind of number
+that has held here; where it rests on a ratio of two latencies, weigh it as the kind that
+has not.
+
+:::caution[Two runs is enough to catch a number that moves, and not enough to certify one that did not]
+
+A row marked as reproduced here survived being taken twice on one machine. That rules out the
+loudest failure mode, which is a single run disturbed by something else running at the time.
+It does not establish repeatability, it says nothing about a different machine, and with
+{len(rows)} rows and two runs some row moving by chance is expected rather than surprising.
+
+:::
+{not_yet}"""
 
 
 # --------------------------------------------------------------------------------------
@@ -1183,19 +1745,33 @@ treat it as a description of the code path rather than as a statistic.
 """
 
 
-def section_s3(run: dict[str, Any], call_run: dict[str, Any] | None) -> str:
+def section_s3(
+    run: dict[str, Any],
+    call_run: dict[str, Any] | None,
+    cpu_run: dict[str, Any] | None,
+) -> str:
     """
-    Write the warm flood section: a modest real difference, and its amplified consequence.
+    Write the warm flood section: a small per-request cost, and the limits of reading it.
 
-    The finding worth carrying away is the per-request one, which is small. The dramatic
-    numbers at the top of the sweep are the same small difference multiplied by proximity to
-    a capacity ceiling, and this section separates the two rather than letting the second
-    stand in for the first.
+    This section used to carry an explanation of what happened at the top of the sweep, built
+    on one run in which the upstream arm stopped serving the offered rate. A later run of the
+    same scenario on the same machine did not reproduce it, and the explanation was deleted
+    rather than softened, because it was a story told about a single unreplicated observation
+    and softening it would have kept the story. What is left is the part that came back: a
+    small per-request difference at some of the offered rates, and an honest account of which
+    rates this scenario can and cannot be read at.
+
+    Nothing here decides which rates are readable in advance. A rate is set aside when an arm
+    stopped serving the offered load, or when the run's own repetitions of that rate
+    disagreed with each other by more than `STEADY_SPREAD_PCT`, and the section says which
+    rates it set aside and why.
 
     Args:
         run:      The run whose S3 measurement is being presented.
         call_run: The run whose call graph measurement is available, if any. Used to relate
                   the service-time difference to the per-request work difference.
+        cpu_run:  The run whose CPU per request measurement is available, if any. Used to
+                  check the shape of the latency result against a direct measurement of work.
 
     Returns:
         Markdown for the section.
@@ -1232,47 +1808,46 @@ def section_s3(run: dict[str, Any], call_run: dict[str, Any] | None) -> str:
             ]
         )
 
+    # Two reasons a rate cannot be read as service time, both taken from the run's own
+    # numbers. The first is an arm that stopped keeping up, so its latency is queueing delay.
+    # The second is a rate whose repetitions disagreed with each other: a median drawn from
+    # those is not describing a steady state, whatever it can be made to say.
     saturated = charts.saturation(document, source)
-    below = [rate for rate in rates if rate not in saturated]
-    top = rates[-1]
-    top_block = measurements[f"target_{top:g}_rps"]
-    legacy_p50 = float(top_block["p50_ms"]["legacy"]["median"])
-    lite_p50 = float(top_block["p50_ms"]["lite"]["median"])
-    legacy_rate = float(top_block["achieved_rps"]["legacy"]["median"])
-    lite_rate = float(top_block["achieved_rps"]["lite"]["median"])
-    rate_verdict = verdicts.get(f"{top:g}rps_achieved_rps", "")
-    top_p50_verdict = verdicts.get(f"{top:g}rps_p50_ms", "")
+    unsteady: dict[float, float] = {}
+    for rate in rates:
+        block = measurements[f"target_{rate:g}_rps"]["p50_ms"]
+        worst = max(relative_spread(block[arm]) for arm in ARMS)
+        if worst > STEADY_SPREAD_PCT:
+            unsteady[rate] = worst
+    steady = [rate for rate in rates if rate not in saturated and rate not in unsteady]
 
-    # The service-time finding: how much more each request costs upstream, at every rate
-    # where both arms were still serving everything they were offered. Above that boundary
-    # the number stops being service time, so it is deliberately not averaged in.
     service_rows = []
     service_diffs: list[float] = []
-    for rate in below:
+    quiet: list[float] = []
+    for rate in rates:
         block = measurements[f"target_{rate:g}_rps"]["p50_ms"]
         legacy_value = float(block["legacy"]["median"])
         lite_value = float(block["lite"]["median"])
         difference = (legacy_value - lite_value) / lite_value * 100.0
-        noise = is_noise(verdicts.get(f"{rate:g}rps_p50_ms", ""))
-        service_rows.append(
-            [
-                f"{rate:g} rps",
-                ms(legacy_value),
-                ms(lite_value),
-                "within noise" if noise else f"+{difference:.1f} percent",
-            ]
-        )
-        if not noise:
+        if rate in saturated:
+            reading = (
+                "set aside: "
+                + listed(LABELS[arm] for arm in saturated[rate])
+                + " stopped serving the offered rate"
+            )
+        elif rate in unsteady:
+            reading = f"set aside: p50 moved {unsteady[rate]:,.0f} percent across the repetitions"
+        elif is_noise(verdicts.get(f"{rate:g}rps_p50_ms", "")):
+            reading = "within noise"
+            quiet.append(rate)
+        else:
+            reading = f"+{difference:.1f} percent"
             service_diffs.append(difference)
+        service_rows.append([f"{rate:g} rps", ms(legacy_value), ms(lite_value), reading])
 
     # Reported as the observed range rather than as an average of two or three points. An
     # average over this few measurements would look more settled than the measurements are.
-    if not service_diffs:
-        headline = "no measurable amount"
-    elif len(service_diffs) == 1:
-        headline = f"{service_diffs[0]:.0f} percent"
-    else:
-        headline = f"{min(service_diffs):.0f} to {max(service_diffs):.0f} percent"
+    headline = "no measurable amount" if not service_diffs else percent_range(service_diffs)
 
     if call_run is not None:
         calls = charts.require(
@@ -1283,14 +1858,14 @@ def section_s3(run: dict[str, Any], call_run: dict[str, Any] | None) -> str:
         fewer = (1.0 - lite_calls / legacy_calls) * 100.0
         if service_diffs:
             work_sentence = (
-                f"That is consistent with the call counting pass, where {LABELS['lite']} makes "
-                f"{fewer:.0f} percent fewer calls serving the same warm request "
-                f"({count(lite_calls)} against {count(legacy_calls)}). A constant factor of that "
-                "size in work per request is exactly what a constant factor of this size in "
-                "service time looks like."
+                f"That is the same direction as the call counting pass, where {LABELS['lite']} "
+                f"makes {fewer:.0f} percent fewer calls serving the same warm request "
+                f"({count(lite_calls)} against {count(legacy_calls)}). Less work per request is "
+                "a reason to expect less time per request; it is not a second measurement of "
+                "how much less."
             )
         else:
-            # Every rate below saturation came back within noise, so there is no service-time
+            # Every readable rate came back within noise, so there is no service-time
             # difference for the call count to be consistent with. Reporting the call count as
             # agreement would be reading a conclusion out of a measurement that declined to
             # draw one.
@@ -1298,8 +1873,8 @@ def section_s3(run: dict[str, Any], call_run: dict[str, Any] | None) -> str:
                 f"The call counting pass separately finds {LABELS['lite']} making {fewer:.0f} "
                 f"percent fewer calls serving the same warm request ({count(lite_calls)} against "
                 f"{count(legacy_calls)}), but this run's latency measurements came back within "
-                "noise at every rate below saturation, so they neither confirm nor contradict "
-                "it. Fewer calls did not show up as measurably less service time here."
+                "noise at every readable rate, so they neither confirm nor contradict it. Fewer "
+                "calls did not show up as measurably less service time here."
             )
     else:
         work_sentence = (
@@ -1307,110 +1882,75 @@ def section_s3(run: dict[str, Any], call_run: dict[str, Any] | None) -> str:
             "service time difference to."
         )
 
-    if saturated.get(top) == ["legacy"]:
-        legacy_short = top - legacy_rate
-        lite_short = top - lite_rate
-        legacy_range = top_block["p50_ms"]["legacy"]
-        lite_range = top_block["p50_ms"]["lite"]
-
-        # Two comparisons are available at the saturated rate and they need not both land.
-        # A comparison whose repetition ranges overlap is not weak support for the answer the
-        # other one gives, it is no evidence in either direction, so it is reported as
-        # inconclusive and then set aside rather than folded in as faint agreement.
-        rate_called = bool(rate_verdict.strip()) and not is_noise(rate_verdict)
-        p50_called = bool(top_p50_verdict.strip()) and not is_noise(top_p50_verdict)
-        legacy_best = float(top_block["achieved_rps"]["legacy"]["max"])
-        if rate_called:
-            rate_line = (
-                f"On the achieved rate the harness calls it: {compare_phrase(rate_verdict)}."
+    aside = [rate for rate in rates if rate in saturated or rate in unsteady]
+    if aside:
+        set_aside = (
+            "\n"
+            + listed(f"{rate:g} rps" for rate in aside)
+            + (" is" if len(aside) == 1 else " are")
+            + " excluded from that figure for the reason given in the table. "
+            + (
+                "A rate whose repetitions of the same workload disagree with each other by "
+                f"more than {STEADY_SPREAD_PCT:g} percent is not reporting a steady state, and "
+                "the difference between two such medians is not a per-request cost however "
+                "confidently it can be quoted."
+                if any(rate in unsteady for rate in aside)
+                else "Latency measured on one side of a saturation boundary and latency "
+                "measured on the other are not the same quantity."
             )
-        else:
-            rate_line = (
-                "On the achieved rate the harness's own overlap test declines to call a winner: "
-                f"{compare_phrase(rate_verdict)}, because {LABELS['legacy']}'s best repetition "
-                f"reached {legacy_best:,.1f} rps."
-            )
-        if p50_called:
-            p50_line = (
-                "On the p50 latency the repetition ranges do not overlap, and the harness does "
-                f"call it: {compare_phrase(top_p50_verdict)}."
-            )
-        else:
-            p50_line = (
-                "On the p50 latency the harness declines as well: "
-                f"{compare_phrase(top_p50_verdict)}."
-            )
-        if p50_called and not rate_called:
-            weighing = (
-                "Only one of those two comparisons supports a conclusion. An inconclusive "
-                "comparison is not faint agreement with the conclusive one; it is no evidence in "
-                f"either direction, and it is not counted here. The reading of {top:g} rps below "
-                "rests on the latency comparison alone."
-            )
-        elif rate_called and not p50_called:
-            weighing = (
-                "Only one of those two comparisons supports a conclusion. The inconclusive one is "
-                "no evidence in either direction and is not counted here, so the reading of "
-                f"{top:g} rps below rests on the achieved-rate comparison alone."
-            )
-        elif rate_called and p50_called:
-            weighing = (
-                "Both comparisons are ranges-disjoint, so both support a conclusion on their own "
-                "terms. They were taken from the same repetitions of the same workload, so they "
-                "are two views of one measurement rather than two independent measurements."
-            )
-        else:
-            weighing = (
-                "Neither comparison is conclusive at this rate: both sets of repetition ranges "
-                f"overlap. Nothing below should be read as a measured difference at {top:g} rps."
-            )
-        evidence = f"{rate_line} {p50_line}\n\n{weighing}"
-
-        ceiling = f"""### Why {top:g} rps looks so much worse than {below[-1]:g} rps
-
-A few percent more work per request also means a few percent less capacity, and at {top:g} rps
-that is what the achieved rate shows. Of the {top:g} offered, {LABELS["legacy"]} served
-{legacy_rate:,.1f}, short by {legacy_short:.1f} per second, while {LABELS["lite"]} served {lite_rate:,.1f},
-short by {lite_short:.1f}. **At this point {LABELS["legacy"]} is at its ceiling and {LABELS["lite"]} is
-not.**
-
-Latency near capacity is not linear in load. As utilisation approaches one, queueing delay
-diverges, so a modest constant factor in service time becomes an enormous factor in observed
-latency the moment one arm crosses its ceiling and the other has not. The p50 at {top:g} rps,
-{ms(legacy_p50)} against {ms(lite_p50)}, is queue depth. It is not per-request work, and it is not a
-{legacy_p50 / lite_p50:.1f}-fold throughput advantage.
-
-The repetition spread says the same thing. Across {provenance_of(run).get("repetitions", "?")}
-repetitions, {LABELS["legacy"]}'s p50 ran from {ms(float(legacy_range["min"]))} to
-{ms(float(legacy_range["max"]))}, while {LABELS["lite"]}'s ran from {ms(float(lite_range["min"]))} to
-{ms(float(lite_range["max"]))}. A system comfortably below its ceiling repeats itself; one sitting on
-the boundary does not.
-
-Two comparisons were taken at {top:g} rps. {evidence}
-
-So there are two findings here and they are not the same size:
-
-- **Real and modest.** Below saturation, {LABELS["legacy"]} costs {headline} more per request.
-  That is the transferable result.
-- **Real but derivative.** The {top:g} rps numbers are that same small difference, amplified by
-  proximity to a capacity ceiling. Comparing latency across a saturation boundary measures
-  the boundary, not the libraries.
-
-The latency chart marks the saturated point, and the achieved-rate chart beside it shows the
-ceiling directly. Read them together or not at all."""
-    elif saturated:
-        arms = ", ".join(LABELS[arm] for rate, found in saturated.items() for arm in found)
-        ceiling = f"""### Saturation in this run
-
-At least one arm stopped serving the offered rate in this run ({arms}), so the latency
-figures above and below that point are not measuring the same quantity. Latency compared
-across a saturation boundary measures the boundary. The achieved-rate chart shows where it
-falls."""
+            + "\n"
+        )
     else:
-        ceiling = f"""### No saturation in this run
+        set_aside = ""
 
-Both arms served every offered rate up to {top:g} rps, so every latency figure above is service
-time rather than queueing delay, and the differences are the modest ones in the table."""
+    called = [rate for rate in steady if rate not in quiet]
+    if quiet and called:
+        cpu_line = ""
+        if cpu_run is not None:
+            cpu = charts.require(
+                cpu_run["documents"]["s9_cpu_per_request"],
+                "measurements",
+                source=f"{cpu_run['label']}/s9_cpu_per_request.json",
+            )
+
+            def cpu_extra(rate: float) -> float | None:
+                block = cpu.get(f"target_{rate:g}_rps", {}).get("cpu_ms_per_request")
+                if not block:
+                    return None
+                legacy_cpu = float(block["legacy"]["median"])
+                lite_cpu = float(block["lite"]["median"])
+                return (legacy_cpu - lite_cpu) / lite_cpu * 100.0
+
+            called_cpu = [value for value in map(cpu_extra, called) if value is not None]
+            quiet_cpu = [value for value in map(cpu_extra, quiet) if value is not None]
+            if called_cpu and quiet_cpu and max(quiet_cpu) < min(called_cpu):
+                cpu_line = (
+                    " The CPU accounting sees the same shape, on a measurement that does not "
+                    f"go through latency at all: {LABELS['legacy']} spends "
+                    f"{percent_range(called_cpu)} more CPU per request at "
+                    f"{listed(f'{rate:g} rps' for rate in called)}, and "
+                    f"{percent_range(quiet_cpu)} more at "
+                    f"{listed(f'{rate:g} rps' for rate in quiet)}. Two instruments finding the "
+                    "same dip at the same rate is why it is reported as real rather than as "
+                    "noise."
+                )
+            elif called_cpu and quiet_cpu:
+                cpu_line = (
+                    " The CPU accounting does not show the same dip: "
+                    f"{LABELS['legacy']} spends {percent_range(quiet_cpu)} more CPU per request "
+                    f"at {listed(f'{rate:g} rps' for rate in quiet)}, against "
+                    f"{percent_range(called_cpu)} at the rates where the latency difference does "
+                    "appear."
+                )
+        dip = f"""
+**{listed(f"{rate:g} rps" for rate in quiet)} does not show the difference, and there is no
+explanation for it here.** At {listed(f"{rate:g} rps" for rate in called)} the repetition ranges
+separate and the harness calls a difference. At {listed(f"{rate:g} rps" for rate in quiet)} they
+overlap and it does not, on a workload that differs only in how often the same request
+arrives.{cpu_line} This is reported because it is there, not because it is understood.
+"""
+    else:
+        dip = ""
 
     return f"""## S3: warm steady state under sustained load
 
@@ -1424,24 +1964,58 @@ it, so a queue that builds shows up as latency instead of hiding as a lower rate
 {table(["Offered rate and metric", LABELS["legacy"], LABELS["lite"], "harness verdict"], rows)}
 ### The per-request finding
 
-Below saturation, p50 reflects the time it takes to serve a request rather than the time it
-spends waiting behind other requests. At every rate where both arms served everything they
-were offered:
+A p50 is the time it takes to serve a request only where nothing is queueing and the machine
+was doing the same thing throughout. A rate is read that way here on two conditions taken
+from the run itself: both arms served everything they were offered, and both arms' p50
+repeated to within {STEADY_SPREAD_PCT:g} percent of its own median across the {
+        provenance_of(run).get("repetitions", "?")
+    } repetitions.
 
-{table(["Offered rate", LABELS["legacy"] + " p50", LABELS["lite"] + " p50", "difference"], service_rows)}
+{
+        table(
+            ["Offered rate", LABELS["legacy"] + " p50", LABELS["lite"] + " p50", "read as"],
+            service_rows,
+        )
+    }
 Serving the same request, {LABELS["legacy"]} costs **{headline} more**. {work_sentence}
+{set_aside}{dip}
+### What this scenario does not support
 
-{ceiling}
+**No throughput conclusion, in either direction.** Every rate here is a rate this harness
+chose to offer, and what the sweep measures is service time at those rates. It is not a
+capacity measurement, and the top of the sweep is the least repeatable point in it: it is the
+rate at which the machine's own behaviour, rather than either library's, most easily becomes
+the largest term. A reader wanting to know how much load either library can carry will not
+find it on this page.
+
+**The size of the difference is the finding, and it is small.** A few percent of a
+millisecond, on a request that costs a few milliseconds, on this machine. It is consistent
+across the rates where it appears and it is worth exactly what it says. Nothing here scales
+that number up.
+
+**This scenario has already produced a result that did not survive being taken twice.** An
+earlier run of it on this machine recorded {LABELS["legacy"]} falling short of the top offered
+rate, with a p50 many times {LABELS["lite"]}'s, and this page carried an explanation of why:
+that upstream reached its capacity ceiling first and the latency difference at that rate was
+queueing delay. The run above, on the same machine, shows neither the shortfall nor the
+latency. The explanation has been deleted rather than qualified, because it was a story built
+on one observation that a second observation did not support, and a qualified version of it
+would have kept the story. The top of the sweep is reported here as a rate this harness
+cannot yet read, and nothing on this page rests on it.
 
 <PlotlyChart
   src="{run["chart_url"]}/s3-latency.json"
-  alt="Line chart of p50 and p99 latency against offered request rate for both libraries on a logarithmic scale, with the saturated rate marked"
+  alt="Line chart of p50 and p99 latency against offered request rate for both libraries on a logarithmic scale{
+        ", with the saturated rate marked" if saturated else ""
+    }"
   provenance="{caption(run)}"
 />
 
 <PlotlyChart
   src="{run["chart_url"]}/s3-achieved-rate.json"
-  alt="Bar chart of achieved request rate against offered request rate for both libraries, showing where upstream falls short"
+  alt="Bar chart of achieved request rate against offered request rate for both libraries{
+        ", showing where an arm falls short" if saturated else ", which both arms met"
+    }"
   provenance="{caption(run)}"
 />
 """
@@ -1840,19 +2414,18 @@ def trend_section(index: dict[str, Any], figures: dict[str, dict[str, Any]]) -> 
             if repeated
             else ""
         )
-        return f"""## Comparing runs against each other
+        return f"""## Charts across runs
 
-**There is nothing to compare yet, and this section is empty until there is.** The results
-tree holds {runs_phrase} across {versions_phrase}, and no measurement on this page has been
-taken by two runs that a reader could set against each other.{also}
+**There is no chart to draw yet, and this section is empty until there is.** The results tree
+holds {runs_phrase} across {versions_phrase}, and none of the specific quantities these charts
+plot has been recorded by two of them.{also}
 
-Every run is kept, so this section will fill in on its own the first time a scenario is
-measured twice, and it will describe what those comparisons show at that point rather than
-before. Until then, treat every number above as one measurement on one machine, with only
-its own repetition range to say how far it would move.
+Every run is kept, so these charts fill in on their own the first time one of those
+quantities is measured twice. The section above compares what the committed runs do hold in
+common, and is the place to look for how far a number here moves between runs.
 """
 
-    lead = f"""## Comparing runs against each other
+    lead = f"""## Charts across runs
 
 Every run is kept, so this page can show change rather than only a snapshot. The two kinds
 of comparison answer different questions. Two runs of the **same** version differ only by
@@ -1869,6 +2442,158 @@ There {"are" if total != 1 else "is"} {runs_phrase} committed, across {versions_
         for name in sorted(figures)
     )
     return lead + "\n" + body
+
+
+def headline_claims(index: dict[str, Any], chosen: dict[str, dict[str, Any]]) -> str:
+    """
+    Write the short list of claims the page stands behind, and how often each was measured.
+
+    The last column is the point of this block. A claim measured by one run is not a weaker
+    version of a claim measured by two, it is an unreplicated one, and the page had already
+    published a confident explanation built on a single observation that a second run then
+    contradicted. Counting the runs behind each claim, from the tree rather than from memory,
+    is what stops that happening quietly again.
+
+    Args:
+        index:  The loaded index.
+        chosen: The run each scenario is drawn from.
+
+    Returns:
+        Markdown for the block, or an empty string when none of these scenarios were
+        measured at all.
+    """
+
+    def runs_measuring(stem: str) -> int:
+        return sum(
+            1
+            for version in index["versions"]
+            for run in version["runs"]
+            if stem in run["scenarios"]
+        )
+
+    rows: list[list[str]] = []
+    replicated: list[str] = []
+
+    cpu_run = chosen.get("s9_cpu_per_request")
+    if cpu_run is not None:
+        cpu = charts.require(
+            cpu_run["documents"]["s9_cpu_per_request"],
+            "measurements",
+            source=f"{cpu_run['label']}/s9_cpu_per_request.json",
+        )
+        extras = []
+        for name, block in sorted(cpu.items()):
+            if not name.startswith("target_") or "cpu_ms_per_request" not in block:
+                continue
+            legacy_value = float(block["cpu_ms_per_request"]["legacy"]["median"])
+            lite_value = float(block["cpu_ms_per_request"]["lite"]["median"])
+            extras.append((legacy_value - lite_value) / lite_value * 100.0)
+        if extras:
+            rows.append(
+                [
+                    f"{LEAD['legacy']} spends {percent_range(extras)} more CPU per request.",
+                    "`s9_cpu_per_request`",
+                    str(runs_measuring("s9_cpu_per_request")),
+                ]
+            )
+            if runs_measuring("s9_cpu_per_request") > 1:
+                replicated.append("the CPU per request figure")
+
+    s2_run = chosen.get("s2_request_amplification")
+    if s2_run is not None:
+        s2 = charts.require(
+            s2_run["documents"]["s2_request_amplification"],
+            "measurements",
+            source=f"{s2_run['label']}/s2_request_amplification.json",
+        )
+        sets = sorted(
+            int(name.removeprefix("scope_sets_")) for name in s2 if name.startswith("scope_sets_")
+        )
+        if sets:
+            top = sets[-1]
+            block = s2[f"scope_sets_{top}"]["total_oidc"]
+            rows.append(
+                [
+                    (
+                        f"{LEAD['legacy']} performs two OIDC fetches per distinct scope set, "
+                        f"{count(float(block['legacy']['median']))} at {top} scope sets, "
+                        f"against {count(float(block['lite']['median']))} in total for "
+                        f"{LABELS['lite']}."
+                    ),
+                    "`s2_request_amplification`",
+                    str(runs_measuring("s2_request_amplification")),
+                ]
+            )
+
+    footprint_run = chosen.get("footprint")
+    if footprint_run is not None:
+        block = charts.require(
+            footprint_run["documents"]["footprint"],
+            "measurements",
+            source=f"{footprint_run['label']}/footprint.json",
+        )
+        rows.append(
+            [
+                (
+                    f"{count(float(block['legacy']['distribution_count']))} distributions are "
+                    "installed alongside the application against "
+                    f"{count(float(block['lite']['distribution_count']))}."
+                ),
+                "`footprint`",
+                str(runs_measuring("footprint")),
+            ]
+        )
+
+    profile_run = chosen.get("profile_sampling")
+    if profile_run is not None:
+        block = charts.require(
+            profile_run["documents"]["profile_sampling"],
+            "measurements",
+            source=f"{profile_run['label']}/profile_sampling.json",
+        )
+        share = float(block["legacy"]["loop_thread_blocked_share"]) * 100.0
+        rows.append(
+            [
+                (
+                    f"{LEAD['legacy']}'s event loop thread was inside a blocking HTTP client "
+                    f"in {share:.1f} percent of samples, while the worst request to an "
+                    f"unauthenticated route waited {ms(float(block['legacy']['worst_health_ms']))}."
+                ),
+                "`profile_sampling`",
+                str(runs_measuring("profile_sampling")),
+            ]
+        )
+
+    if not rows:
+        return ""
+
+    once = [row for row in rows if row[2] == "1"]
+    if not once:
+        replication = (
+            "Every one of these has been measured by more than one committed run, and the "
+            "section on what reproduces sets those runs against each other."
+        )
+    elif replicated:
+        replication = (
+            f"Only {listed(replicated)} has been taken by more than one committed run. The "
+            "others rest on a single run each, and the section on what reproduces says what "
+            "that is worth."
+        )
+    else:
+        replication = (
+            "None of these has yet been measured by more than one committed run, so none of "
+            "them has been shown to come back the same."
+        )
+
+    return f"""## What this page claims
+
+{table(["Claim", "Measured by", "Committed runs that measured it"], rows)}
+{replication}
+
+**The last column is not decoration.** This page previously carried a confident explanation
+of a dramatic result that a later run of the same scenario on the same machine did not
+reproduce. The explanation is gone; the habit it produced is this column, and the section
+below that sets runs against each other."""
 
 
 def write_index_page(index: dict[str, Any], figures: dict[str, dict[str, Any]]) -> str:
@@ -1971,6 +2696,8 @@ accordingly. What follows reports the results that go against armasec-lite and t
 this harness could not answer in the same place, and at the same size, as the ones that go
 for it.
 
+{headline_claims(index, chosen)}
+
 ## How to read this page
 
 - **These numbers describe one machine running Docker.** Everything below was measured on
@@ -2016,23 +2743,30 @@ recent run of that version which measured it:
     ]
 
     call_run = chosen.get("call_graph")
+    cpu_run = chosen.get("s9_cpu_per_request")
     for stem in SCENARIO_ORDER:
         run = chosen.get(stem)
         if run is None:
             raise GenerationError(f"no run measured {stem}")
         if stem == "s3_warm_flood":
-            parts.append(section_s3(run, call_run))
+            parts.append(section_s3(run, call_run, cpu_run))
         else:
             parts.append(SECTIONS[stem](run))
 
+    reproducibility = reproducibility_section(index)
+    if reproducibility:
+        parts.append(reproducibility)
     parts.append(trend_section(index, figures))
     parts.append(
         """## What this page does not tell you
 
-- **A throughput multiple.** The S3 numbers at the top offered rate are the easiest thing on
-  this page to overread. They are a modest per-request difference amplified by one arm
-  reaching its capacity ceiling while the other had not. The per-request difference is the
-  finding; the multiple is an artefact of where the boundary fell on this machine.
+- **A throughput multiple.** S3 measures service time at a set of rates this harness chose to
+  offer. It does not measure capacity, and no arithmetic on it produces a capacity. The top
+  of its sweep is the least repeatable point on this page and the easiest thing here to
+  overread; the small per-request difference at the rates below it is the finding.
+- **Which of these numbers would come back the same.** For most of them nobody knows, because
+  most of this page has been measured once. The section on what reproduces says which
+  quantities have been taken twice and how far they moved, and that list is short.
 - **A latency multiple you can quote.** The S4 ratio between the two arms is the second
   easiest thing here to overread. It is a function of the provider delay this harness
   injected, it scales with that delay, and it would be a different number on a provider with
