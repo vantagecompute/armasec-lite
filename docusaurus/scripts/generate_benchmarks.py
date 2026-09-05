@@ -692,6 +692,34 @@ def section_profile(run: dict[str, Any]) -> str:
     lite = measurements["lite"]
     found = blocking_signature(document)
 
+    legacy_blocking = float(legacy["loop_thread_samples_in_blocking_http_client"])
+    lite_blocking = float(lite["loop_thread_samples_in_blocking_http_client"])
+    # The lead sentence used to say "and it agrees" whatever the profiler found, including
+    # the case where it found nothing at all and the block below says so. What this pass
+    # supports is decided by its own counts, not by the result it is placed next to.
+    if found is None or legacy_blocking <= lite_blocking:
+        heading = "The same question, asked with a second instrument"
+        agreement = (
+            "This pass found no separation between the arms, so it neither supports nor "
+            "contradicts the S4 result and nothing should be read into it as agreement."
+        )
+        independence = (
+            "Because this pass separated nothing, there is no second instrument agreeing with "
+            "the first here. The S4 latency measurement stands on its own, and the counts above "
+            "are a description of where the sampler happened to land rather than support for it."
+        )
+    else:
+        heading = "The same result, measured a second way"
+        agreement = "This is a different instrument on the same question, and it agrees."
+        independence = """Two different measurement techniques, a latency measurement taken from outside the process
+and a stack sample taken from inside it, give the same answer. They are independent
+**methods**. They are not independent **experiments**: both were taken in the same harness,
+on the same machine, against the same workload, in the same process, so a common-mode error
+in the harness would move both together and their agreement would not reveal it. This is not
+corroboration by an independent party, and it is not two chances at being wrong reduced to
+one. It is two instruments on one bench agreeing, which is the strongest evidence on this
+page and still evidence of exactly that kind."""
+
     if found is None:
         signature_block = (
             "The profiler recorded no loop-thread stack matching a blocking HTTP client in "
@@ -712,14 +740,14 @@ carry this exact signature. `_client.py:send` at the bottom is the synchronous e
 an HTTP client, and `sync.py:read` at the top is a blocking socket read. Those frames are on
 the thread running `run_forever`, which is the event loop."""
 
-    return f"""## The same result, measured a second way
+    return f"""## {heading}
 
 {escape(str(document["question"]))}
 
 A separate pass repeats the S4 workload with a sampling profiler running inside each
-application: a daemon thread calling `sys._current_frames()` every {
-        config["interval_ms"]:g} ms. This is a
-different instrument on the same question, and it agrees.
+application: a daemon thread calling `sys._current_frames()` every {config["interval_ms"]:g} ms. {
+        agreement
+    }
 
 :::caution[This pass is a single observation]
 
@@ -787,14 +815,7 @@ whether everything else the process is serving waits for it. The blocking read h
 both arms; under {LABELS["lite"]} it happens on a worker thread, where the profiler counted
 {count(float(lite["worker_thread_samples_in_blocking_http_client"]))} samples of it.
 
-Two different measurement techniques, a latency measurement taken from outside the process
-and a stack sample taken from inside it, give the same answer. They are independent
-**methods**. They are not independent **experiments**: both were taken in the same harness,
-on the same machine, against the same workload, in the same process, so a common-mode error
-in the harness would move both together and their agreement would not reveal it. This is not
-corroboration by an independent party, and it is not two chances at being wrong reduced to
-one. It is two instruments on one bench agreeing, which is the strongest evidence on this
-page and still evidence of exactly that kind.
+{independence}
 
 <PlotlyChart
   src="{run["chart_url"]}/profile-loop-samples.json"
@@ -1220,6 +1241,7 @@ def section_s3(run: dict[str, Any], call_run: dict[str, Any] | None) -> str:
     legacy_rate = float(top_block["achieved_rps"]["legacy"]["median"])
     lite_rate = float(top_block["achieved_rps"]["lite"]["median"])
     rate_verdict = verdicts.get(f"{top:g}rps_achieved_rps", "")
+    top_p50_verdict = verdicts.get(f"{top:g}rps_p50_ms", "")
 
     # The service-time finding: how much more each request costs upstream, at every rate
     # where both arms were still serving everything they were offered. Above that boundary
@@ -1259,13 +1281,26 @@ def section_s3(run: dict[str, Any], call_run: dict[str, Any] | None) -> str:
         legacy_calls = float(calls["legacy"]["warm_total_calls"])
         lite_calls = float(calls["lite"]["warm_total_calls"])
         fewer = (1.0 - lite_calls / legacy_calls) * 100.0
-        work_sentence = (
-            f"That is consistent with the call counting pass, where {LABELS['lite']} makes "
-            f"{fewer:.0f} percent fewer calls serving the same warm request "
-            f"({count(lite_calls)} against {count(legacy_calls)}). A constant factor of that size in "
-            "work per request is exactly what a constant factor of this size in service time "
-            "looks like."
-        )
+        if service_diffs:
+            work_sentence = (
+                f"That is consistent with the call counting pass, where {LABELS['lite']} makes "
+                f"{fewer:.0f} percent fewer calls serving the same warm request "
+                f"({count(lite_calls)} against {count(legacy_calls)}). A constant factor of that "
+                "size in work per request is exactly what a constant factor of this size in "
+                "service time looks like."
+            )
+        else:
+            # Every rate below saturation came back within noise, so there is no service-time
+            # difference for the call count to be consistent with. Reporting the call count as
+            # agreement would be reading a conclusion out of a measurement that declined to
+            # draw one.
+            work_sentence = (
+                f"The call counting pass separately finds {LABELS['lite']} making {fewer:.0f} "
+                f"percent fewer calls serving the same warm request ({count(lite_calls)} against "
+                f"{count(legacy_calls)}), but this run's latency measurements came back within "
+                "noise at every rate below saturation, so they neither confirm nor contradict "
+                "it. Fewer calls did not show up as measurably less service time here."
+            )
     else:
         work_sentence = (
             "This run recorded no call counting pass, so there is nothing here to relate the "
@@ -1277,6 +1312,60 @@ def section_s3(run: dict[str, Any], call_run: dict[str, Any] | None) -> str:
         lite_short = top - lite_rate
         legacy_range = top_block["p50_ms"]["legacy"]
         lite_range = top_block["p50_ms"]["lite"]
+
+        # Two comparisons are available at the saturated rate and they need not both land.
+        # A comparison whose repetition ranges overlap is not weak support for the answer the
+        # other one gives, it is no evidence in either direction, so it is reported as
+        # inconclusive and then set aside rather than folded in as faint agreement.
+        rate_called = bool(rate_verdict.strip()) and not is_noise(rate_verdict)
+        p50_called = bool(top_p50_verdict.strip()) and not is_noise(top_p50_verdict)
+        legacy_best = float(top_block["achieved_rps"]["legacy"]["max"])
+        if rate_called:
+            rate_line = (
+                f"On the achieved rate the harness calls it: {compare_phrase(rate_verdict)}."
+            )
+        else:
+            rate_line = (
+                "On the achieved rate the harness's own overlap test declines to call a winner: "
+                f"{compare_phrase(rate_verdict)}, because {LABELS['legacy']}'s best repetition "
+                f"reached {legacy_best:,.1f} rps."
+            )
+        if p50_called:
+            p50_line = (
+                "On the p50 latency the repetition ranges do not overlap, and the harness does "
+                f"call it: {compare_phrase(top_p50_verdict)}."
+            )
+        else:
+            p50_line = (
+                "On the p50 latency the harness declines as well: "
+                f"{compare_phrase(top_p50_verdict)}."
+            )
+        if p50_called and not rate_called:
+            weighing = (
+                "Only one of those two comparisons supports a conclusion. An inconclusive "
+                "comparison is not faint agreement with the conclusive one; it is no evidence in "
+                f"either direction, and it is not counted here. The reading of {top:g} rps below "
+                "rests on the latency comparison alone."
+            )
+        elif rate_called and not p50_called:
+            weighing = (
+                "Only one of those two comparisons supports a conclusion. The inconclusive one is "
+                "no evidence in either direction and is not counted here, so the reading of "
+                f"{top:g} rps below rests on the achieved-rate comparison alone."
+            )
+        elif rate_called and p50_called:
+            weighing = (
+                "Both comparisons are ranges-disjoint, so both support a conclusion on their own "
+                "terms. They were taken from the same repetitions of the same workload, so they "
+                "are two views of one measurement rather than two independent measurements."
+            )
+        else:
+            weighing = (
+                "Neither comparison is conclusive at this rate: both sets of repetition ranges "
+                f"overlap. Nothing below should be read as a measured difference at {top:g} rps."
+            )
+        evidence = f"{rate_line} {p50_line}\n\n{weighing}"
+
         ceiling = f"""### Why {top:g} rps looks so much worse than {below[-1]:g} rps
 
 A few percent more work per request also means a few percent less capacity, and at {top:g} rps
@@ -1297,10 +1386,7 @@ repetitions, {LABELS["legacy"]}'s p50 ran from {ms(float(legacy_range["min"]))} 
 {ms(float(lite_range["max"]))}. A system comfortably below its ceiling repeats itself; one sitting on
 the boundary does not.
 
-On the achieved rate specifically, the harness's own overlap test declines to call a winner:
-{compare_phrase(rate_verdict)}, because {LABELS["legacy"]}'s best repetition reached
-{float(top_block["achieved_rps"]["legacy"]["max"]):,.1f} rps. The latency evidence is the stronger of the two
-and it points the same way.
+Two comparisons were taken at {top:g} rps. {evidence}
 
 So there are two findings here and they are not the same size:
 
