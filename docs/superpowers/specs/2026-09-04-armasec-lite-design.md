@@ -1,7 +1,15 @@
 # armasec-lite Design
 
 Date: 2026-09-04
-Status: Approved
+Status: Approved. The library is built and tested; two sections are specified but not yet
+built, and say so where they begin.
+
+**Build status.** `armasec_lite/`, its test suite, the documentation site and the release
+workflow exist and are described here as they actually behave. The **Benchmarks** and
+**Integration comparison harness** sections specify work that does not exist yet: there is
+no `benchmarks/` directory and, until the harness lands, no `legacy_comparison_compose/`
+either. Those sections are a design to build against, not a description of the tree. Read
+them in the future tense, and do not cite a number from them until a result file exists.
 
 ## Purpose
 
@@ -780,6 +788,9 @@ what they actually resolved rather than trusting the floor.
 
 ## Benchmarks
 
+> **Not yet built.** This section specifies work that does not exist in the tree.
+> No `benchmarks/` directory has been written.
+
 ### Ground rule
 
 Every number that appears in the documentation site is produced by a script in
@@ -840,6 +851,9 @@ matching at its own boundary, and has explicit tests proving each defense rather
 inheriting them from a transitive dependency. The matrix presents it that way.
 
 ## Integration comparison harness
+
+> **Not yet built.** This section specifies work that does not exist in the tree.
+> No published figure may cite it until its result files are committed.
 
 Two real FastAPI services under Docker Compose, one on upstream `armasec==3.0.3` and one
 on `armasec-lite`, authenticating against **a real Keycloak** and driven by a load
