@@ -1,4 +1,26 @@
+<div align="center">
+<a href="https://www.vantagecompute.ai/">
+  <img src="https://vantage-compute-public-assets.s3.us-east-1.amazonaws.com/branding/vantage-logo-text-black-horz.png" alt="Vantage Compute Logo" width="100" style="margin-bottom: 0.5em;"/>
+</a>
+</div>
+
+<div align="center">
+
 # armasec-lite
+
+Injectable FastAPI auth via OIDC, with three dependencies instead of ten.
+
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://python.org)
+[![PyPI](https://img.shields.io/pypi/v/armasec-lite.svg)](https://pypi.org/project/armasec-lite/)
+![Build Status](https://img.shields.io/github/actions/workflow/status/vantagecompute/armasec-lite/release.yml?branch=main&label=build&logo=github&style=plastic)
+![GitHub Issues](https://img.shields.io/github/issues/vantagecompute/armasec-lite?label=issues&logo=github&style=plastic)
+![Pull Requests](https://img.shields.io/github/issues-pr/vantagecompute/armasec-lite?label=pull-requests&logo=github&style=plastic)
+![GitHub Contributors](https://img.shields.io/github/contributors/vantagecompute/armasec-lite?logo=github&style=plastic)
+
+</div>
+
+## Overview
 
 Injectable FastAPI authentication and authorization against OIDC providers, built almost
 entirely on the Python standard library. `armasec-lite` is a dependency-minimal
