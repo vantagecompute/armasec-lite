@@ -212,7 +212,9 @@ def _summarize_s4(document: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in {
-            "worst_health_latency_ms": _arm_pair(document, "measurements", "worst_health_latency_ms"),
+            "worst_health_latency_ms": _arm_pair(
+                document, "measurements", "worst_health_latency_ms"
+            ),
             "health_p99_during_cold_load_ms": _arm_pair(
                 document, "measurements", "health_p99_during_cold_load_ms"
             ),
@@ -331,11 +333,17 @@ def _summarize_memory(document: dict[str, Any]) -> dict[str, Any]:
             for arm in ("legacy", "lite")
         }
     out["import_modules_added"] = {
-        arm: document.get("measurements", {}).get(arm, {}).get("import_cost", {}).get("modules_added")
+        arm: document.get("measurements", {})
+        .get(arm, {})
+        .get("import_cost", {})
+        .get("modules_added")
         for arm in ("legacy", "lite")
     }
     out["import_rss_delta_kib"] = {
-        arm: document.get("measurements", {}).get(arm, {}).get("import_cost", {}).get("rss_delta_kib")
+        arm: document.get("measurements", {})
+        .get(arm, {})
+        .get("import_cost", {})
+        .get("rss_delta_kib")
         for arm in ("legacy", "lite")
     }
     return out
@@ -394,7 +402,10 @@ def _summarize_call_graph(document: dict[str, Any]) -> dict[str, Any]:
             for arm in ("legacy", "lite")
         }
     out["reachable_from_call"] = {
-        arm: document.get("measurements", {}).get(arm, {}).get("static", {}).get("reachable_from_call")
+        arm: document.get("measurements", {})
+        .get(arm, {})
+        .get("static", {})
+        .get("reachable_from_call")
         for arm in ("legacy", "lite")
     }
     return out

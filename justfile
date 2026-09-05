@@ -234,8 +234,10 @@ local-token:
 docs-dev PORT=DOCS_PORT:
     cd docusaurus && npm install && npm run start -- --port {{PORT}}
 
-# The SDK reference is regenerated as part of this: the pydoc plugin writes it from
-# docstrings at build time and it is not committed, so a build is the only way it exists.
+# The SDK reference and the benchmark pages are both regenerated as part of this: the pydoc
+# plugin writes the reference from docstrings and npm's `prebuild` hook runs
+# scripts/generate_benchmarks.py over the committed results. Neither is committed, so a
+# build is the only way either exists.
 
 # Build the static site into docusaurus/build.
 docs-build:
@@ -247,6 +249,20 @@ docs-build:
 # Regenerate the SDK reference alone, without building the site.
 docs-sdk:
     cd docusaurus && npm install && PYDOC_PYTHON="$(uv python find 3.14)" npm run gen-sdk-docs
+
+# The benchmark pages and their figure specs are generated the same way the SDK reference
+# is: written at build time from committed data, never committed themselves. The data is
+# the JSON under legacy_comparison_compose/results/, and the generator reads that and
+# nothing else. It fails rather than emitting a page with a scenario missing, so a broken
+# results tree stops the docs build instead of quietly publishing a shorter page.
+
+# Regenerate the benchmark pages and Plotly figure specs from the committed results.
+charts:
+    python3 docusaurus/scripts/generate_benchmarks.py
+
+# Validate the results tree and build every figure without writing anything.
+charts-check:
+    python3 docusaurus/scripts/generate_benchmarks.py --check
 
 # The plugin fails outright when introspection fails, and when every requested module
 # documents nothing. This catches the case neither covers: a partial generation, where some
@@ -277,6 +293,18 @@ docs-verify: docs-build docs-diagrams
         exit 1
     fi
     echo "SDK reference OK: $generated pages for $declared declared modules"
+
+    # Same check for the benchmark pages: one per committed run, plus the summary. Counted
+    # against the results tree rather than a number written here, so committing a run
+    # cannot be forgotten in the check.
+    committed=$(find ../legacy_comparison_compose/results -mindepth 2 -maxdepth 2 -type d | wc -l)
+    pages=$(find docs/benchmarks -name '*.mdx' | wc -l)
+    if [ "$pages" -ne "$(( committed + 1 ))" ]; then
+        echo "Benchmark pages are incomplete: $committed runs committed, $pages pages generated."
+        echo "Expected one page per run plus one summary."
+        exit 1
+    fi
+    echo "Benchmark pages OK: $pages pages for $committed committed runs"
 
 # Serve the built site locally. Takes a port for the same reason as docs-dev.
 docs-serve PORT=DOCS_PORT:

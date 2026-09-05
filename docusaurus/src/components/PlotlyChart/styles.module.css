@@ -1,0 +1,37 @@
+/**
+ * Chart chrome. Colors come from Infima variables so the frame follows the site theme;
+ * the plot area itself is themed in Figure.tsx, where Plotly needs concrete values.
+ */
+
+.figure {
+  margin: 1.75rem 0;
+  padding: 0;
+}
+
+.canvas {
+  width: 100%;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: var(--ifm-global-radius);
+  background: var(--ifm-background-surface-color);
+  padding: 0.5rem;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--ifm-color-emphasis-600);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 1rem;
+}
+
+.caption {
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-700);
+}
