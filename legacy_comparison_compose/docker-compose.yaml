@@ -1,0 +1,218 @@
+# The armasec-lite versus armasec comparison stack.
+#
+# Four services. Every one of them has a health check and every dependency is expressed as
+# `condition: service_healthy`, so `docker compose up` either comes up in a known state or
+# fails, rather than racing Keycloak's thirty second startup.
+#
+# The two application services carry identical `cpus` and `mem_limit`. An unfair comparison
+# is worse than no comparison.
+
+name: armasec-comparison
+
+# Anchors, so the two arms cannot drift apart by editing one and forgetting the other.
+x-app-resources: &app-resources
+  cpus: 1.0
+  mem_limit: 512m
+  memswap_limit: 512m
+
+x-app-environment: &app-environment
+  ARMASEC_DOMAIN: oidc-proxy:8080/realms/armasec
+  ARMASEC_AUDIENCE: armasec-api
+  ARMASEC_USE_HTTPS: "false"
+  ARMASEC_VERIFY_ISSUER: "true"
+  HARNESS_PROXY_URL: http://oidc-proxy:8080
+  # Scenario S2 counts OIDC fetches against the number of distinct lockdown() scope sets
+  # exercised, so it needs distinct scope sets to reach one at a time. All twenty are
+  # registered on both arms and the scenario calls the first N of them; a route that is
+  # never called never builds a loader, so registering more than a sweep point uses costs
+  # that sweep point nothing.
+  HARNESS_SCOPE_ROUTES: "20"
+
+# The application health probe, and it is measured rather than assumed.
+#
+# It used to be `python -c 'import urllib.request; urllib.request.urlopen(...)'` on a three
+# second interval. That costs 287ms of CPU per probe, almost all of it importing `ssl`,
+# `email` and `http.client` into a fresh interpreter, and Docker charges it to the container
+# it probes. At a three second interval that is 9.6% of one core burned continuously in both
+# application containers. It never biased the latency comparison, because the two arms carry
+# the identical probe through this anchor, but scenarios S9 and S11 measure the CPU those
+# containers consume, and a 287ms spike landing unpredictably inside a ten second window
+# would have been a larger and noisier term than the per-request work being measured.
+#
+# Two changes. The probe speaks HTTP/1.0 over a bare socket, which costs 93ms rather than
+# 287ms because it imports `socket` and nothing else. And it runs on a sixty second interval
+# with a one second `start_interval`, so Docker probes every second while the container is
+# still starting, which is what `up --wait`, `depends_on: service_healthy` and the restarts
+# between repetitions need, and then once a minute forever after, which is all a liveness
+# signal needs. Scenarios that measure CPU count the probes that landed in their window from
+# the daemon's health log and report the number, so any residue is visible rather than
+# assumed away.
+x-app-healthcheck: &app-healthcheck
+  test:
+    - CMD
+    - python
+    - -c
+    - 'import socket; c=socket.create_connection(("127.0.0.1",8000),2); c.sendall(b"GET /health HTTP/1.0\r\nHost: h\r\n\r\n"); assert b" 200 " in c.recv(128)'
+  interval: 60s
+  timeout: 3s
+  retries: 5
+  start_period: 30s
+  start_interval: 1s
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      # THE TRAP. Keycloak advertises absolute URLs in its discovery document, and
+      # `jwks_uri` is one of them. Left at the default it would advertise its own address,
+      # the apps would fetch the JWKS directly, and every JWKS request would bypass the
+      # proxy uncounted. Pointing it at the proxy also makes the discovery document's
+      # `issuer` and the `iss` claim of minted tokens the same string, which matters
+      # because armasec-lite compares them by exact equality and upstream does not.
+      # If /__stats ever shows a zero count for the certs path, this line is wrong.
+      KC_HOSTNAME: http://oidc-proxy:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "false"
+    volumes:
+      - ./realm:/opt/keycloak/data/import:ro
+    ports:
+      - "127.0.0.1:18081:8080"
+    healthcheck:
+      # The image has no curl, so the readiness probe on the management port is spoken by
+      # hand over bash's /dev/tcp.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          timeout 3 cat <&3 | grep -q '"status": "UP"'
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 15s
+    cpus: 2.0
+    mem_limit: 1536m
+
+  oidc-proxy:
+    image: python:3.12-slim
+    command: ["python", "-u", "/srv/main.py"]
+    environment:
+      PROXY_LISTEN_PORT: "8080"
+      PROXY_UPSTREAM_HOST: keycloak
+      PROXY_UPSTREAM_PORT: "8080"
+    volumes:
+      - ./proxy/main.py:/srv/main.py:ro
+    ports:
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      # /__stats is answered locally and is never counted, so probing it cannot pollute
+      # the request counts the scenarios read.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/__stats", timeout=2)
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 2s
+    cpus: 1.0
+    mem_limit: 256m
+
+  app-legacy:
+    build:
+      context: ..
+      dockerfile: legacy_comparison_compose/Dockerfile.app
+      args:
+        ARMASEC_LIB: legacy
+    environment:
+      <<: *app-environment
+      ARMASEC_LIB: legacy
+    ports:
+      - "127.0.0.1:18001:8000"
+    depends_on:
+      oidc-proxy:
+        condition: service_healthy
+    healthcheck: *app-healthcheck
+    <<: *app-resources
+
+  app-lite:
+    build:
+      context: ..
+      dockerfile: legacy_comparison_compose/Dockerfile.app
+      args:
+        ARMASEC_LIB: lite
+    environment:
+      <<: *app-environment
+      ARMASEC_LIB: lite
+    ports:
+      - "127.0.0.1:18002:8000"
+    depends_on:
+      oidc-proxy:
+        condition: service_healthy
+    healthcheck: *app-healthcheck
+    <<: *app-resources
+
+  # The load generator. Behind a profile so `docker compose up -d` brings up the stack
+  # without it, and it is run on demand with `docker compose run --rm bench`.
+  #
+  # It sits on the compose network and addresses the services by name, so its requests do
+  # not traverse the host's published port mappings. It gets the Docker socket because
+  # three of the scenarios restart application containers between repetitions and one reads
+  # container resource limits and image digests for the provenance block; there is no other
+  # way to do either from inside a container.
+  #
+  # It also gets the host's cgroup v2 hierarchy, read only, because the CPU scenarios read
+  # each application container's `cpu.stat` and `memory.current` directly. Reading them with
+  # `docker exec` instead would charge the exec'd process's own CPU to the counter being
+  # read, in the arm being sampled and not in the other one, which is exactly the quantity
+  # those scenarios are comparing. Read only, and the bench container writes nothing to it
+  # except an attempted `memory.peak` reset that older kernels refuse.
+  #
+  # Three CPUs, chosen so the generator cannot be the bottleneck: the arm under load has
+  # one, only one arm is loaded at a time, and the host has eight.
+  bench:
+    build:
+      context: .
+      dockerfile: Dockerfile.bench
+    profiles: ["bench"]
+    environment:
+      HARNESS_PROXY_HOST: oidc-proxy
+      HARNESS_PROXY_PORT: "8080"
+      HARNESS_LEGACY_HOST: app-legacy
+      HARNESS_LITE_HOST: app-lite
+      HARNESS_APP_PORT: "8000"
+      HARNESS_COMPOSE_PROJECT: armasec-comparison
+      HARNESS_RESULTS_DIR: /results
+      HARNESS_CGROUP_ROOT: /host/sys/fs/cgroup
+    volumes:
+      - ./results:/results
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /sys/fs/cgroup:/host/sys/fs/cgroup:ro
+    depends_on:
+      app-legacy:
+        condition: service_healthy
+      app-lite:
+        condition: service_healthy
+    # One TCP connection per request is the right shape for an open-loop generator (see
+    # bench/scenarios.py), but it means the flood scenario opens hundreds of thousands of
+    # sockets, and the default ephemeral port range holds 28,232 of them against a 60
+    # second TIME_WAIT. Sustained load would exhaust it and the generator would start
+    # failing to connect, which would look exactly like the server refusing requests. Both
+    # settings are network-namespaced, so they apply to this container alone.
+    sysctls:
+      net.ipv4.ip_local_port_range: "10000 65000"
+      net.ipv4.tcp_tw_reuse: "1"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    cpus: 3.0
+    mem_limit: 1g

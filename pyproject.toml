@@ -1,0 +1,81 @@
+[project]
+name = "armasec-lite"
+version = "0.1.0"
+description = "Injectable FastAPI auth via OIDC, with three dependencies"
+authors = [{name = "Vantage Compute", email = "info@vantagecompute.ai"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.12"
+keywords = ["fastapi", "auth", "oidc", "oauth2", "security", "jwt"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Security",
+]
+dependencies = [
+    "fastapi>=0.141.1,<1",
+    "cryptography>=50.0.1,<51",
+    "pydantic>=2.13.5,<3",
+]
+
+[project.urls]
+Homepage = "https://github.com/vantagecompute/armasec-lite"
+Repository = "https://github.com/vantagecompute/armasec-lite"
+
+[project.optional-dependencies]
+test = ["pytest>=9.1.1,<10"]
+
+[project.entry-points."pytest11"]
+pytest_armasec_lite = "armasec_lite.pytest_extension"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1,<10",
+    "pytest-asyncio>=1.4.0,<2",
+    "pytest-cov>=7.1.0,<8",
+    "pyjwt>=2.13.0,<3",
+    "httpx2>=2.12.0,<3",
+    "mypy>=2.3.1,<3",
+    "ruff>=0.16.6,<1",
+]
+# Upstream armasec is deliberately NOT listed here. It declares pytest<9 and respx as
+# RUNTIME dependencies, so adding it makes this project's lockfile unsatisfiable against
+# pytest>=9.1. That constraint leaking into a consumer's environment is the exact defect
+# armasec-lite exists to remove. The comparison harness installs upstream armasec into
+# isolated uv venvs and Docker containers instead, which is what the design spec specifies.
+bench = [
+    "plotly>=6,<7",
+]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests/unit"]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires the docker compose comparison stack to be running",
+]
+
+[tool.ruff]
+line-length = 100
+# docusaurus/vendor is left over from when the pydoc plugin was vendored here; it now comes
+# from npm, so there is no submodule and normally no such directory. The entry stays so a
+# hand-vendored copy of a third-party plugin is never linted by this project, which does not
+# own it and cannot fix it. docs/superpowers holds planning and spec prose (ruff 0.16 lints
+# and formats fenced Python in Markdown by default), not shipped code or docs.
+extend-exclude = ["docusaurus/vendor", "docs/superpowers", ".worktrees"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["armasec_lite"]

@@ -1,0 +1,25 @@
+/node_modules
+/build
+/.docusaurus
+.cache-loader
+
+# Generated at build time by @vantagecompute/docusaurus-plugin-pydoc.
+#
+# Deliberately not committed. The plugin fails the build on an introspection failure, so
+# either these pages are regenerated from current source or there is no build, there is
+# nothing here that can go stale. Committing them would introduce exactly that risk: a
+# generator that warned rather than failed would leave the previous pages in place and the
+# build would publish them as though they were fresh.
+docs/api-reference/
+
+# Generated at build time by scripts/generate_benchmarks.py from the committed result
+# files under legacy_comparison_compose/results/.
+#
+# Deliberately not committed, for the same reason as docs/api-reference/ above. The
+# committed artefact is the result JSON; these pages and figures are derived from it. A
+# committed generated page can outlive the data it came from, and a stale benchmark page is
+# worse than no page at all, because a reader cannot see that it is stale. The generator
+# fails the build rather than emitting a partial page, so either these are current or there
+# is no site.
+docs/benchmarks/
+static/charts/

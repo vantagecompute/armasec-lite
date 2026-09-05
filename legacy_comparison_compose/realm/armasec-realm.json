@@ -1,0 +1,143 @@
+{
+  "realm": "armasec",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 900,
+  "registrationAllowed": false,
+  "roles": {
+    "client": {
+      "armasec-api": [
+        { "name": "read:stuff", "description": "Read the stuff." },
+        { "name": "write:stuff", "description": "Write the stuff." },
+        { "name": "admin:stuff", "description": "Administer the stuff." }
+      ]
+    }
+  },
+  "clients": [
+    {
+      "clientId": "armasec-api",
+      "name": "armasec comparison API",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": false,
+      "secret": "armasec-api-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "attributes": {
+        "access.token.lifespan": "900"
+      },
+      "protocolMappers": [
+        {
+          "name": "armasec-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "armasec-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "other-api",
+      "name": "A different API, for the wrong-audience case",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": false,
+      "secret": "other-api-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "other-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "other-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "shortlived-api",
+      "name": "Correct audience, two second token lifespan, for the expired case",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": false,
+      "secret": "shortlived-api-secret",
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "attributes": {
+        "access.token.lifespan": "2"
+      },
+      "protocolMappers": [
+        {
+          "name": "armasec-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "armasec-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "testuser",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "testuser@example.com",
+      "firstName": "Test",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "testuser-password", "temporary": false }
+      ],
+      "clientRoles": {
+        "armasec-api": ["read:stuff", "write:stuff"]
+      }
+    },
+    {
+      "username": "service-account-armasec-api",
+      "enabled": true,
+      "serviceAccountClientId": "armasec-api",
+      "clientRoles": {
+        "armasec-api": ["write:stuff"]
+      }
+    },
+    {
+      "username": "service-account-shortlived-api",
+      "enabled": true,
+      "serviceAccountClientId": "shortlived-api",
+      "clientRoles": {
+        "armasec-api": ["read:stuff"]
+      }
+    }
+  ]
+}

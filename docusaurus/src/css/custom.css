@@ -1,0 +1,53 @@
+/**
+ * armasec-lite documentation: project-specific style overrides.
+ *
+ * The shared Vantage design system (tokens, typography, dark/light themes,
+ * sidebar, TOC, admonitions, code blocks, navbar, footer, etc.) is loaded
+ * automatically by @vantagecompute/docusaurus-theme, and the navbar and footer
+ * are used exactly as the theme ships them: the dark indigo (#18123B navbar,
+ * iris-900 footer) that every Vantage developer spoke site renders.
+ *
+ * There is deliberately no `:root` block overriding --vantage-navbar-bg and
+ * friends here. It would be dead code. Docusaurus injects `customCss` BEFORE
+ * the theme's own stylesheet, so a custom property redeclared at equal
+ * specificity loses to the theme's default regardless of what it says:
+ *
+ *   our    --vantage-navbar-bg:var(--vantage-purple)   byte 55399
+ *   theme  --vantage-navbar-bg:#18123b                 byte 57756   (wins)
+ *
+ * v8x carries exactly such a block and it is inert there too, which is why its
+ * navbar renders the theme default and not the purple it appears to ask for.
+ * Copying it would have looked like a brand change and done nothing.
+ *
+ * If a future project genuinely needs to override one of these, raise the
+ * specificity rather than the source order: `html:root { ... }` beats the
+ * theme's `:root` no matter which stylesheet lands first. Do that only on
+ * purpose, and check the built CSS afterwards.
+ */
+
+/* ── GitHub button ────────────────────────────────────────────────── */
+/* The theme styles no navbar buttons of its own, so this is additive rather
+   than an override, and applies regardless of injection order. */
+.github-button {
+  background-color: var(--vantage-button) !important;
+  color: white !important;
+  border-radius: 6px;
+  padding: 8px 16px;
+  margin: 0 4px;
+  border: none;
+  font-weight: 500;
+  text-decoration: none;
+}
+.github-button:hover {
+  background-color: #9084ff !important;
+  color: white !important;
+  text-decoration: none;
+}
+
+/* ── Mermaid ──────────────────────────────────────────────────────── */
+/* Several of the sequence diagrams here are wide enough to need horizontal
+   scroll on a laptop, and the page body must never scroll sideways. */
+.docusaurus-mermaid-container {
+  overflow-x: auto;
+  margin: 1.5rem 0;
+}

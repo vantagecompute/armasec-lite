@@ -1,0 +1,690 @@
+{
+  "schema": "armasec-lite-comparison-index/1",
+  "generated_utc": "2026-09-05T03:07:00+00:00",
+  "note": "Derived in full from the result files under this directory. Every number here is recomputed from those files whenever the index is rebuilt, so the index is never a second source of truth.",
+  "scenario_files": [
+    "s1_cold_start",
+    "s2_request_amplification",
+    "s3_warm_flood",
+    "s4_event_loop_blocking",
+    "s8_failing_provider",
+    "s9_cpu_per_request",
+    "s10_cpu_during_cold_load",
+    "s11_idle_cpu",
+    "footprint",
+    "memory",
+    "call_graph",
+    "profile_sampling"
+  ],
+  "version_count": 1,
+  "run_count": 2,
+  "versions": [
+    {
+      "version": "0.1.0",
+      "directory": "v0.1.0",
+      "run_count": 2,
+      "runs": [
+        {
+          "run_id": "2026-09-05T02-33-42Z",
+          "path": "v0.1.0/2026-09-05T02-33-42Z",
+          "complete": true,
+          "scenarios": [
+            "s1_cold_start",
+            "s2_request_amplification",
+            "s3_warm_flood",
+            "s4_event_loop_blocking",
+            "s8_failing_provider",
+            "s9_cpu_per_request",
+            "s10_cpu_during_cold_load",
+            "s11_idle_cpu",
+            "footprint",
+            "memory",
+            "call_graph",
+            "profile_sampling"
+          ],
+          "missing": [],
+          "provenance": {
+            "timestamp_utc": "2026-09-05T02:33:42+00:00",
+            "hostname": "raton-actions-00",
+            "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+            "cpu_count": 8,
+            "memory_total_bytes": 33284620288,
+            "kernel": "6.8.0-134-generic",
+            "operating_system": "Ubuntu 24.04.4 LTS",
+            "docker_version": "29.6.0",
+            "docker_api_version": "1.55",
+            "repetitions": 5,
+            "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+            "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+            "keycloak_repo_digests": [
+              "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+            ],
+            "library_versions": {
+              "legacy": "legacy 3.0.3",
+              "lite": "lite 0.1.0"
+            },
+            "app_container_limits": {
+              "identical": true,
+              "legacy": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-legacy",
+                "image_id": "sha256:3ea7b80a8680fecb665367a2561c17686c0ce4042caae04423f5a735bd5a453b"
+              },
+              "lite": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-lite",
+                "image_id": "sha256:43636120e7c93c5a7e600ea314bf69d328a2d116f91867ded1d943f49dc2e405"
+              }
+            },
+            "cgroup": {
+              "version": "v2",
+              "root_mounted_at": "/host/sys/fs/cgroup",
+              "memory_peak_resettable": false
+            },
+            "run_id": "2026-09-05T02-33-42Z",
+            "armasec_lite_version": "0.1.0",
+            "quick_mode": false
+          },
+          "verdicts": {
+            "s1_cold_start": {
+              "c1_first_response": "armasec-lite 2.21x lower, ranges disjoint",
+              "c1_last_response": "armasec-lite 2.21x lower, ranges disjoint",
+              "c2_first_response": "armasec-lite 2.24x lower, ranges disjoint",
+              "c2_last_response": "armasec-lite 2.26x lower, ranges disjoint",
+              "c4_first_response": "armasec-lite 1.93x lower, ranges disjoint",
+              "c4_last_response": "armasec-lite 1.94x lower, ranges disjoint",
+              "c8_first_response": "armasec-lite 1.76x lower, ranges disjoint",
+              "c8_last_response": "armasec-lite 2.12x lower, ranges disjoint",
+              "c16_first_response": "armasec-lite 2.09x lower, ranges disjoint",
+              "c16_last_response": "armasec-lite 2.13x lower, ranges disjoint",
+              "c32_first_response": "armasec-lite 1.49x lower, ranges disjoint",
+              "c32_last_response": "armasec-lite 1.79x lower, ranges disjoint",
+              "c64_first_response": "within noise (repetition ranges overlap)",
+              "c64_last_response": "within noise (repetition ranges overlap)"
+            },
+            "s2_request_amplification": {
+              "n0_total_oidc": "within noise (repetition ranges overlap)",
+              "n1_total_oidc": "within noise (repetition ranges overlap)",
+              "n5_total_oidc": "armasec-lite 5.00x lower, ranges disjoint",
+              "n10_total_oidc": "armasec-lite 10.00x lower, ranges disjoint",
+              "n20_total_oidc": "armasec-lite 20.00x lower, ranges disjoint"
+            },
+            "s3_warm_flood": {
+              "100rps_p50_ms": "armasec-lite 1.10x lower, ranges disjoint",
+              "100rps_p99_ms": "armasec-lite 1.10x lower, ranges disjoint",
+              "100rps_achieved_rps": "within noise (repetition ranges overlap)",
+              "300rps_p50_ms": "within noise (repetition ranges overlap)",
+              "300rps_p99_ms": "armasec-lite 1.04x lower, ranges disjoint",
+              "300rps_achieved_rps": "within noise (repetition ranges overlap)",
+              "600rps_p50_ms": "armasec-lite 1.09x lower, ranges disjoint",
+              "600rps_p99_ms": "armasec-lite 1.31x lower, ranges disjoint",
+              "600rps_achieved_rps": "within noise (repetition ranges overlap)",
+              "900rps_p50_ms": "armasec-lite 1.54x lower, ranges disjoint",
+              "900rps_p99_ms": "within noise (repetition ranges overlap)",
+              "900rps_achieved_rps": "within noise (repetition ranges overlap)"
+            },
+            "s4_event_loop_blocking": {
+              "worst_health_latency": "armasec-lite 118.65x lower, ranges disjoint",
+              "health_requests_over_100ms": "lite wins, ranges disjoint (one median is zero, no ratio)",
+              "baseline_p50": "within noise (repetition ranges overlap)"
+            },
+            "s8_failing_provider": {
+              "jwks_fetches": "no winner declared (upstream median 0, armasec-lite median 1): upstream armasec makes zero JWKS fetches here because it never attempts a refetch on an unknown kid at all, which also means it cannot recover from a genuine key rotation without a process restart; armasec-lite makes exactly one bounded fetch across all 60 attacker-chosen unknown key ids, which is the refresh rate limit doing its job"
+            },
+            "s9_cpu_per_request": {
+              "100rps_cpu_ms_per_request": "within noise (repetition ranges overlap)",
+              "100rps_cpu_ms_per_request_idle_corrected": "within noise (repetition ranges overlap)",
+              "100rps_anon_max_bytes": "armasec-lite 1.05x lower, ranges disjoint",
+              "100rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "300rps_cpu_ms_per_request": "armasec-lite 1.05x lower, ranges disjoint",
+              "300rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.05x lower, ranges disjoint",
+              "300rps_anon_max_bytes": "armasec-lite 1.05x lower, ranges disjoint",
+              "300rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "600rps_cpu_ms_per_request": "armasec-lite 1.18x lower, ranges disjoint",
+              "600rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.18x lower, ranges disjoint",
+              "600rps_anon_max_bytes": "armasec-lite 1.05x lower, ranges disjoint",
+              "600rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "900rps_cpu_ms_per_request": "armasec-lite 1.18x lower, ranges disjoint",
+              "900rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.19x lower, ranges disjoint",
+              "900rps_anon_max_bytes": "within noise (repetition ranges overlap)",
+              "900rps_anon_climb_bytes": "within noise (repetition ranges overlap)"
+            },
+            "s10_cpu_during_cold_load": {
+              "legacy_shape": "upstream armasec: 0.050 cores during the stall against a 0.082 core baseline (below baseline) while /health p99 was 1067ms",
+              "lite_shape": "armasec-lite: 0.077 cores during the stall against a 0.114 core baseline (below baseline) while /health p99 was 6ms",
+              "cores_during_stall": "ranges disjoint"
+            },
+            "s11_idle_cpu": {
+              "idle_cpu": "upstream 0.134% of a core vs armasec-lite 0.125%, over one 30 second window, with 0 and 0 health probes in them"
+            },
+            "footprint": {
+              "distribution_count": "upstream 41 vs armasec-lite 18"
+            },
+            "memory": {
+              "baseline": "upstream 43.1MB vs armasec-lite 39.1MB"
+            },
+            "call_graph": {
+              "warm_total_calls": "upstream 989 vs armasec-lite 848 per warm request"
+            },
+            "profile_sampling": {
+              "loop_thread_blocked_share": "upstream 12.7% vs armasec-lite 0.0% of loop-thread samples inside a blocking HTTP client"
+            }
+          },
+          "summary": {
+            "s1_cold_start": {
+              "1": {
+                "first_response_ms": {
+                  "legacy": 93.60451065003872,
+                  "lite": 42.326152324676514
+                },
+                "last_response_ms": {
+                  "legacy": 93.60451065003872,
+                  "lite": 42.326152324676514
+                },
+                "p95_ms": {
+                  "legacy": 93.60451065003872,
+                  "lite": 42.326152324676514
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "2": {
+                "first_response_ms": {
+                  "legacy": 98.66966027766466,
+                  "lite": 44.09643914550543
+                },
+                "last_response_ms": {
+                  "legacy": 99.73922930657864,
+                  "lite": 44.19583920389414
+                },
+                "p95_ms": {
+                  "legacy": 99.68575085513294,
+                  "lite": 44.1908692009747
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "4": {
+                "first_response_ms": {
+                  "legacy": 88.03564496338367,
+                  "lite": 45.50225846469402
+                },
+                "last_response_ms": {
+                  "legacy": 91.00140165537596,
+                  "lite": 46.97628319263458
+                },
+                "p95_ms": {
+                  "legacy": 90.98473927006125,
+                  "lite": 46.96196620352566
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "8": {
+                "first_response_ms": {
+                  "legacy": 83.00098683685064,
+                  "lite": 47.027756460011005
+                },
+                "last_response_ms": {
+                  "legacy": 107.2589447721839,
+                  "lite": 50.501538440585136
+                },
+                "p95_ms": {
+                  "legacy": 107.21746860072017,
+                  "lite": 50.496526109054685
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "16": {
+                "first_response_ms": {
+                  "legacy": 105.73718510568142,
+                  "lite": 50.56014657020569
+                },
+                "last_response_ms": {
+                  "legacy": 121.33999541401863,
+                  "lite": 56.98464158922434
+                },
+                "p95_ms": {
+                  "legacy": 121.30334763787687,
+                  "lite": 56.97371088899672
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "32": {
+                "first_response_ms": {
+                  "legacy": 99.4802238419652,
+                  "lite": 66.87627732753754
+                },
+                "last_response_ms": {
+                  "legacy": 131.22002221643925,
+                  "lite": 73.38143698871136
+                },
+                "p95_ms": {
+                  "legacy": 131.20023347437382,
+                  "lite": 73.34532733075321
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "64": {
+                "first_response_ms": {
+                  "legacy": 114.15175441652536,
+                  "lite": 121.50450982153416
+                },
+                "last_response_ms": {
+                  "legacy": 205.97011875361204,
+                  "lite": 128.08574363589287
+                },
+                "p95_ms": {
+                  "legacy": 205.93080455437303,
+                  "lite": 127.98440656624734
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              }
+            },
+            "s2_request_amplification": {
+              "0": {
+                "discovery": {
+                  "legacy": 0.0,
+                  "lite": 0.0
+                },
+                "jwks": {
+                  "legacy": 0.0,
+                  "lite": 0.0
+                },
+                "total_oidc": {
+                  "legacy": 0.0,
+                  "lite": 0.0
+                }
+              },
+              "1": {
+                "discovery": {
+                  "legacy": 1.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 1.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "5": {
+                "discovery": {
+                  "legacy": 5.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 5.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 10.0,
+                  "lite": 2.0
+                }
+              },
+              "10": {
+                "discovery": {
+                  "legacy": 10.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 10.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 20.0,
+                  "lite": 2.0
+                }
+              },
+              "20": {
+                "discovery": {
+                  "legacy": 20.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 20.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 40.0,
+                  "lite": 2.0
+                }
+              }
+            },
+            "s3_warm_flood": {
+              "100": {
+                "achieved_rps": {
+                  "legacy": 100.05035364153466,
+                  "lite": 100.05287122834604
+                },
+                "p50_ms": {
+                  "legacy": 3.5689219273629114,
+                  "lite": 3.2571887783705566
+                },
+                "p95_ms": {
+                  "legacy": 4.392841797321667,
+                  "lite": 4.019596403464674
+                },
+                "p99_ms": {
+                  "legacy": 4.881818402558671,
+                  "lite": 4.4379197958856444
+                }
+              },
+              "300": {
+                "achieved_rps": {
+                  "legacy": 299.96324424255516,
+                  "lite": 299.8994342886188
+                },
+                "p50_ms": {
+                  "legacy": 2.370539947102346,
+                  "lite": 2.403169237077063
+                },
+                "p95_ms": {
+                  "legacy": 3.103750128919457,
+                  "lite": 3.1211221733441143
+                },
+                "p99_ms": {
+                  "legacy": 3.5831446164597804,
+                  "lite": 3.4498222560933147
+                }
+              },
+              "600": {
+                "achieved_rps": {
+                  "legacy": 599.7122050392651,
+                  "lite": 599.7394321641823
+                },
+                "p50_ms": {
+                  "legacy": 1.9884891249239978,
+                  "lite": 1.8238139835498046
+                },
+                "p95_ms": {
+                  "legacy": 2.6356128528713945,
+                  "lite": 2.427491052696995
+                },
+                "p99_ms": {
+                  "legacy": 3.6515575395277375,
+                  "lite": 2.7858851008117007
+                }
+              },
+              "900": {
+                "achieved_rps": {
+                  "legacy": 899.3284475943173,
+                  "lite": 899.3426389715369
+                },
+                "p50_ms": {
+                  "legacy": 2.8679936151538854,
+                  "lite": 1.8585803173483129
+                },
+                "p95_ms": {
+                  "legacy": 9.663689419006431,
+                  "lite": 3.038520277374412
+                },
+                "p99_ms": {
+                  "legacy": 18.25505591250156,
+                  "lite": 7.256080171092917
+                }
+              }
+            },
+            "s4_event_loop_blocking": {
+              "worst_health_latency_ms": {
+                "legacy": 1076.9722880795598,
+                "lite": 9.076757356524467
+              },
+              "health_p99_during_cold_load_ms": {
+                "legacy": 1064.2805367596445,
+                "lite": 4.13498402200655
+              },
+              "health_requests_over_100ms": {
+                "legacy": 40.0,
+                "lite": 0.0
+              },
+              "health_baseline_p50_ms": {
+                "legacy": 2.7319543994963613,
+                "lite": 2.6733780279755566
+              }
+            },
+            "s8_failing_provider": {
+              "jwks_fetches_during_flood": {
+                "legacy": 0.0,
+                "lite": 1.0
+              },
+              "unknown_kid_requests_per_repetition": 60
+            },
+            "footprint": {
+              "distribution_count": {
+                "legacy": 41,
+                "lite": 18
+              },
+              "distribution_count_excluding_harness_overhead": {
+                "legacy": 37,
+                "lite": 14
+              },
+              "watched_present": {
+                "legacy": [
+                  "auto-name-enum",
+                  "pluggy",
+                  "py-buzz",
+                  "pytest",
+                  "python-jose",
+                  "respx",
+                  "snick"
+                ],
+                "lite": []
+              }
+            },
+            "memory": {
+              "baseline_idle_bytes": {
+                "legacy": 43089920,
+                "lite": 39092224
+              },
+              "warm_bytes": {
+                "legacy": 44478464,
+                "lite": 42790912
+              },
+              "import_modules_added": {
+                "legacy": 389,
+                "lite": 223
+              },
+              "import_rss_delta_kib": {
+                "legacy": 28640,
+                "lite": 19848
+              }
+            },
+            "call_graph": {
+              "warm_total_calls": {
+                "legacy": 989,
+                "lite": 848
+              },
+              "warm_max_depth": {
+                "legacy": 22,
+                "lite": 19
+              },
+              "warm_calls_auth_library": {
+                "legacy": 57,
+                "lite": 41
+              },
+              "warm_calls_jwt_layer": {
+                "legacy": 44,
+                "lite": 23
+              },
+              "warm_calls_library_and_jwt": {
+                "legacy": 101,
+                "lite": 64
+              },
+              "warm_calls_framework": {
+                "legacy": 117,
+                "lite": 131
+              },
+              "cold_total_calls": {
+                "legacy": 34070,
+                "lite": 5051
+              },
+              "reachable_from_call": {
+                "legacy": 24,
+                "lite": 27
+              }
+            },
+            "profile_sampling": {
+              "loop_thread_samples": {
+                "legacy": 1561,
+                "lite": 1555
+              },
+              "loop_thread_samples_idle_in_selector": {
+                "legacy": 1313,
+                "lite": 1490
+              },
+              "loop_thread_samples_busy": {
+                "legacy": 248,
+                "lite": 65
+              },
+              "loop_thread_samples_in_blocking_http_client": {
+                "legacy": 199,
+                "lite": 0
+              },
+              "worker_thread_samples_in_blocking_http_client": {
+                "legacy": 0,
+                "lite": 197
+              },
+              "worst_health_ms": {
+                "legacy": 1066.503812558949,
+                "lite": 7.113171555102049
+              },
+              "cold_auth_request_ms": {
+                "legacy": 1065.1096692308784,
+                "lite": 1054.9553083255887
+              }
+            }
+          }
+        },
+        {
+          "run_id": "2026-09-05T01-55-12Z",
+          "path": "v0.1.0/2026-09-05T01-55-12Z",
+          "complete": false,
+          "scenarios": [
+            "s9_cpu_per_request",
+            "s10_cpu_during_cold_load",
+            "s11_idle_cpu"
+          ],
+          "missing": [
+            "s1_cold_start",
+            "s2_request_amplification",
+            "s3_warm_flood",
+            "s4_event_loop_blocking",
+            "s8_failing_provider",
+            "footprint",
+            "memory",
+            "call_graph",
+            "profile_sampling"
+          ],
+          "provenance": {
+            "timestamp_utc": "2026-09-05T01:55:12+00:00",
+            "hostname": "raton-actions-00",
+            "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+            "cpu_count": 8,
+            "memory_total_bytes": 33284620288,
+            "kernel": "6.8.0-134-generic",
+            "operating_system": "Ubuntu 24.04.4 LTS",
+            "docker_version": "29.6.0",
+            "docker_api_version": "1.55",
+            "repetitions": 5,
+            "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+            "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+            "keycloak_repo_digests": [
+              "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+            ],
+            "library_versions": {
+              "legacy": "legacy 3.0.3",
+              "lite": "lite 0.1.0"
+            },
+            "app_container_limits": {
+              "identical": true,
+              "legacy": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-legacy",
+                "image_id": "sha256:3ea7b80a8680fecb665367a2561c17686c0ce4042caae04423f5a735bd5a453b"
+              },
+              "lite": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-lite",
+                "image_id": "sha256:43636120e7c93c5a7e600ea314bf69d328a2d116f91867ded1d943f49dc2e405"
+              }
+            },
+            "cgroup": {
+              "version": "v2",
+              "root_mounted_at": "/host/sys/fs/cgroup",
+              "memory_peak_resettable": false
+            },
+            "run_id": "2026-09-05T01-55-12Z",
+            "armasec_lite_version": "0.1.0",
+            "quick_mode": false
+          },
+          "verdicts": {
+            "s9_cpu_per_request": {
+              "100rps_cpu_ms_per_request": "armasec-lite 1.19x lower, ranges disjoint",
+              "100rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.20x lower, ranges disjoint",
+              "100rps_anon_max_bytes": "armasec-lite 1.06x lower, ranges disjoint",
+              "100rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "300rps_cpu_ms_per_request": "armasec-lite 1.06x lower, ranges disjoint",
+              "300rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.06x lower, ranges disjoint",
+              "300rps_anon_max_bytes": "armasec-lite 1.06x lower, ranges disjoint",
+              "300rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "600rps_cpu_ms_per_request": "armasec-lite 1.20x lower, ranges disjoint",
+              "600rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.22x lower, ranges disjoint",
+              "600rps_anon_max_bytes": "armasec-lite 1.06x lower, ranges disjoint",
+              "600rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "900rps_cpu_ms_per_request": "armasec-lite 1.19x lower, ranges disjoint",
+              "900rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.19x lower, ranges disjoint",
+              "900rps_anon_max_bytes": "armasec-lite 1.06x lower, ranges disjoint",
+              "900rps_anon_climb_bytes": "within noise (repetition ranges overlap)"
+            },
+            "s10_cpu_during_cold_load": {
+              "legacy_shape": "upstream armasec: 0.057 cores during the stall against a 0.073 core baseline (below baseline) while /health p99 was 1064ms",
+              "lite_shape": "armasec-lite: 0.080 cores during the stall against a 0.118 core baseline (below baseline) while /health p99 was 7ms",
+              "cores_during_stall": "ranges disjoint"
+            },
+            "s11_idle_cpu": {
+              "idle_cpu": "upstream 0.152% of a core vs armasec-lite 0.139%, over one 30 second window, with 0 and 0 health probes in them"
+            }
+          },
+          "summary": {}
+        }
+      ]
+    }
+  ]
+}
