@@ -1,0 +1,134 @@
+# The armasec-lite versus armasec comparison stack.
+#
+# Four services. Every one of them has a health check and every dependency is expressed as
+# `condition: service_healthy`, so `docker compose up` either comes up in a known state or
+# fails, rather than racing Keycloak's thirty second startup.
+#
+# The two application services carry identical `cpus` and `mem_limit`. An unfair comparison
+# is worse than no comparison.
+
+name: armasec-comparison
+
+# Anchors, so the two arms cannot drift apart by editing one and forgetting the other.
+x-app-resources: &app-resources
+  cpus: 1.0
+  mem_limit: 512m
+  memswap_limit: 512m
+
+x-app-environment: &app-environment
+  ARMASEC_DOMAIN: oidc-proxy:8080/realms/armasec
+  ARMASEC_AUDIENCE: armasec-api
+  ARMASEC_USE_HTTPS: "false"
+  ARMASEC_VERIFY_ISSUER: "true"
+
+x-app-healthcheck: &app-healthcheck
+  test:
+    - CMD
+    - python
+    - -c
+    - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2)
+  interval: 3s
+  timeout: 3s
+  retries: 20
+  start_period: 5s
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      # THE TRAP. Keycloak advertises absolute URLs in its discovery document, and
+      # `jwks_uri` is one of them. Left at the default it would advertise its own address,
+      # the apps would fetch the JWKS directly, and every JWKS request would bypass the
+      # proxy uncounted. Pointing it at the proxy also makes the discovery document's
+      # `issuer` and the `iss` claim of minted tokens the same string, which matters
+      # because armasec-lite compares them by exact equality and upstream does not.
+      # If /__stats ever shows a zero count for the certs path, this line is wrong.
+      KC_HOSTNAME: http://oidc-proxy:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "false"
+    volumes:
+      - ./realm:/opt/keycloak/data/import:ro
+    ports:
+      - "127.0.0.1:18081:8080"
+    healthcheck:
+      # The image has no curl, so the readiness probe on the management port is spoken by
+      # hand over bash's /dev/tcp.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          timeout 3 cat <&3 | grep -q '"status": "UP"'
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 15s
+    cpus: 2.0
+    mem_limit: 1536m
+
+  oidc-proxy:
+    image: python:3.12-slim
+    command: ["python", "-u", "/srv/main.py"]
+    environment:
+      PROXY_LISTEN_PORT: "8080"
+      PROXY_UPSTREAM_HOST: keycloak
+      PROXY_UPSTREAM_PORT: "8080"
+    volumes:
+      - ./proxy/main.py:/srv/main.py:ro
+    ports:
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      # /__stats is answered locally and is never counted, so probing it cannot pollute
+      # the request counts the scenarios read.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/__stats", timeout=2)
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 2s
+    cpus: 1.0
+    mem_limit: 256m
+
+  app-legacy:
+    build:
+      context: ..
+      dockerfile: legacy_comparison_compose/Dockerfile.app
+      args:
+        ARMASEC_LIB: legacy
+    environment:
+      <<: *app-environment
+      ARMASEC_LIB: legacy
+    ports:
+      - "127.0.0.1:18001:8000"
+    depends_on:
+      oidc-proxy:
+        condition: service_healthy
+    healthcheck: *app-healthcheck
+    <<: *app-resources
+
+  app-lite:
+    build:
+      context: ..
+      dockerfile: legacy_comparison_compose/Dockerfile.app
+      args:
+        ARMASEC_LIB: lite
+    environment:
+      <<: *app-environment
+      ARMASEC_LIB: lite
+    ports:
+      - "127.0.0.1:18002:8000"
+    depends_on:
+      oidc-proxy:
+        condition: service_healthy
+    healthcheck: *app-healthcheck
+    <<: *app-resources
