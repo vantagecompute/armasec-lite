@@ -1,0 +1,615 @@
+{
+  "schema": "armasec-lite-comparison-index/1",
+  "generated_utc": "2026-09-05T01:15:52+00:00",
+  "note": "Derived in full from the result files under this directory. Every number here is recomputed from those files whenever the index is rebuilt, so the index is never a second source of truth.",
+  "scenario_files": [
+    "s1_cold_start",
+    "s2_request_amplification",
+    "s3_warm_flood",
+    "s4_event_loop_blocking",
+    "s8_failing_provider",
+    "footprint",
+    "memory",
+    "call_graph",
+    "profile_sampling"
+  ],
+  "version_count": 1,
+  "run_count": 2,
+  "versions": [
+    {
+      "version": "0.1.0",
+      "directory": "v0.1.0",
+      "run_count": 2,
+      "runs": [
+        {
+          "run_id": "2026-09-05T01-08Z-raton-actions-00",
+          "path": "v0.1.0/2026-09-05T01-08Z-raton-actions-00",
+          "complete": false,
+          "scenarios": [
+            "s8_failing_provider"
+          ],
+          "missing": [
+            "s1_cold_start",
+            "s2_request_amplification",
+            "s3_warm_flood",
+            "s4_event_loop_blocking",
+            "footprint",
+            "memory",
+            "call_graph",
+            "profile_sampling"
+          ],
+          "provenance": {
+            "timestamp_utc": "2026-09-05T01:08:45+00:00",
+            "hostname": "raton-actions-00",
+            "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+            "cpu_count": 8,
+            "memory_total_bytes": 33284620288,
+            "kernel": "6.8.0-134-generic",
+            "operating_system": "Ubuntu 24.04.4 LTS",
+            "docker_version": "29.6.0",
+            "docker_api_version": "1.55",
+            "repetitions": 5,
+            "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+            "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+            "keycloak_repo_digests": [
+              "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+            ],
+            "library_versions": {
+              "legacy": "legacy 3.0.3",
+              "lite": "lite 0.1.0"
+            },
+            "app_container_limits": {
+              "identical": true,
+              "legacy": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-legacy",
+                "image_id": "sha256:3ea7b80a8680fecb665367a2561c17686c0ce4042caae04423f5a735bd5a453b"
+              },
+              "lite": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-lite",
+                "image_id": "sha256:43636120e7c93c5a7e600ea314bf69d328a2d116f91867ded1d943f49dc2e405"
+              }
+            }
+          },
+          "verdicts": {
+            "s8_failing_provider": {
+              "jwks_fetches": "no winner declared (upstream median 0, armasec-lite median 1): upstream armasec makes zero JWKS fetches here because it never attempts a refetch on an unknown kid at all, which also means it cannot recover from a genuine key rotation without a process restart; armasec-lite makes exactly one bounded fetch across all 60 attacker-chosen unknown key ids, which is the refresh rate limit doing its job"
+            }
+          },
+          "summary": {
+            "s8_failing_provider": {
+              "jwks_fetches_during_flood": {
+                "legacy": 0.0,
+                "lite": 1.0
+              },
+              "unknown_kid_requests_per_repetition": 60
+            }
+          }
+        },
+        {
+          "run_id": "2026-09-05T00-33Z-raton-actions-00",
+          "path": "v0.1.0/2026-09-05T00-33Z-raton-actions-00",
+          "complete": false,
+          "scenarios": [
+            "s1_cold_start",
+            "s2_request_amplification",
+            "s3_warm_flood",
+            "s4_event_loop_blocking",
+            "footprint",
+            "memory",
+            "call_graph",
+            "profile_sampling"
+          ],
+          "missing": [
+            "s8_failing_provider"
+          ],
+          "provenance": {
+            "timestamp_utc": "2026-09-05T00:33:09+00:00",
+            "hostname": "raton-actions-00",
+            "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+            "cpu_count": 8,
+            "memory_total_bytes": 33284620288,
+            "kernel": "6.8.0-134-generic",
+            "operating_system": "Ubuntu 24.04.4 LTS",
+            "docker_version": "29.6.0",
+            "docker_api_version": "1.55",
+            "repetitions": 5,
+            "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+            "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+            "keycloak_repo_digests": [
+              "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+            ],
+            "library_versions": {
+              "legacy": "legacy 3.0.3",
+              "lite": "lite 0.1.0"
+            },
+            "app_container_limits": {
+              "identical": true,
+              "legacy": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-legacy",
+                "image_id": "sha256:3ea7b80a8680fecb665367a2561c17686c0ce4042caae04423f5a735bd5a453b"
+              },
+              "lite": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-lite",
+                "image_id": "sha256:43636120e7c93c5a7e600ea314bf69d328a2d116f91867ded1d943f49dc2e405"
+              }
+            }
+          },
+          "verdicts": {
+            "s1_cold_start": {
+              "c1_first_response": "armasec-lite 1.20x lower, ranges disjoint",
+              "c1_last_response": "armasec-lite 1.20x lower, ranges disjoint",
+              "c2_first_response": "armasec-lite 1.11x lower, ranges disjoint",
+              "c2_last_response": "armasec-lite 1.13x lower, ranges disjoint",
+              "c4_first_response": "armasec-lite 1.17x lower, ranges disjoint",
+              "c4_last_response": "armasec-lite 1.20x lower, ranges disjoint",
+              "c8_first_response": "armasec-lite 1.12x lower, ranges disjoint",
+              "c8_last_response": "armasec-lite 1.15x lower, ranges disjoint",
+              "c16_first_response": "armasec-lite 1.13x lower, ranges disjoint",
+              "c16_last_response": "armasec-lite 1.24x lower, ranges disjoint",
+              "c32_first_response": "within noise (repetition ranges overlap)",
+              "c32_last_response": "armasec-lite 1.27x lower, ranges disjoint",
+              "c64_first_response": "upstream armasec 1.53x lower, ranges disjoint",
+              "c64_last_response": "within noise (repetition ranges overlap)"
+            },
+            "s2_request_amplification": {
+              "n0_total_oidc": "within noise (repetition ranges overlap)",
+              "n1_total_oidc": "within noise (repetition ranges overlap)",
+              "n5_total_oidc": "armasec-lite 5.00x lower, ranges disjoint",
+              "n10_total_oidc": "armasec-lite 10.00x lower, ranges disjoint",
+              "n20_total_oidc": "armasec-lite 20.00x lower, ranges disjoint"
+            },
+            "s3_warm_flood": {
+              "100rps_p50_ms": "armasec-lite 1.10x lower, ranges disjoint",
+              "100rps_p99_ms": "armasec-lite 1.12x lower, ranges disjoint",
+              "100rps_achieved_rps": "within noise (repetition ranges overlap)",
+              "300rps_p50_ms": "within noise (repetition ranges overlap)",
+              "300rps_p99_ms": "within noise (repetition ranges overlap)",
+              "300rps_achieved_rps": "within noise (repetition ranges overlap)",
+              "600rps_p50_ms": "armasec-lite 1.11x lower, ranges disjoint",
+              "600rps_p99_ms": "armasec-lite 2.30x lower, ranges disjoint",
+              "600rps_achieved_rps": "within noise (repetition ranges overlap)",
+              "900rps_p50_ms": "armasec-lite 17.70x lower, ranges disjoint",
+              "900rps_p99_ms": "armasec-lite 1.62x lower, ranges disjoint",
+              "900rps_achieved_rps": "within noise (repetition ranges overlap)"
+            },
+            "s4_event_loop_blocking": {
+              "worst_health_latency": "armasec-lite 137.04x lower, ranges disjoint",
+              "health_requests_over_100ms": "lite wins, ranges disjoint (one median is zero, no ratio)",
+              "baseline_p50": "within noise (repetition ranges overlap)"
+            },
+            "footprint": {
+              "distribution_count": "upstream 41 vs armasec-lite 18"
+            },
+            "memory": {
+              "baseline": "upstream 43.1MB vs armasec-lite 39.1MB"
+            },
+            "call_graph": {
+              "warm_total_calls": "upstream 952 vs armasec-lite 799 per warm request"
+            },
+            "profile_sampling": {
+              "loop_thread_blocked_share": "upstream 12.8% vs armasec-lite 0.0% of loop-thread samples inside a blocking HTTP client"
+            }
+          },
+          "summary": {
+            "s1_cold_start": {
+              "1": {
+                "first_response_ms": {
+                  "legacy": 49.08336419612169,
+                  "lite": 41.02274775505066
+                },
+                "last_response_ms": {
+                  "legacy": 49.08336419612169,
+                  "lite": 41.02274775505066
+                },
+                "p95_ms": {
+                  "legacy": 49.08336419612169,
+                  "lite": 41.02274775505066
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "2": {
+                "first_response_ms": {
+                  "legacy": 48.78238867968321,
+                  "lite": 43.77051070332527
+                },
+                "last_response_ms": {
+                  "legacy": 49.69937074929476,
+                  "lite": 43.862681835889816
+                },
+                "p95_ms": {
+                  "legacy": 49.65352164581418,
+                  "lite": 43.85807327926159
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "4": {
+                "first_response_ms": {
+                  "legacy": 49.7748302295804,
+                  "lite": 42.37957112491131
+                },
+                "last_response_ms": {
+                  "legacy": 52.55767051130533,
+                  "lite": 43.962495401501656
+                },
+                "p95_ms": {
+                  "legacy": 52.552613662555814,
+                  "lite": 43.89821346849203
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "8": {
+                "first_response_ms": {
+                  "legacy": 50.57075060904026,
+                  "lite": 45.25470454245806
+                },
+                "last_response_ms": {
+                  "legacy": 56.60493578761816,
+                  "lite": 49.086459912359715
+                },
+                "p95_ms": {
+                  "legacy": 56.586651876568794,
+                  "lite": 49.05047100037336
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "16": {
+                "first_response_ms": {
+                  "legacy": 56.15011788904667,
+                  "lite": 49.73933845758438
+                },
+                "last_response_ms": {
+                  "legacy": 68.64959094673395,
+                  "lite": 55.28120882809162
+                },
+                "p95_ms": {
+                  "legacy": 68.63859877921641,
+                  "lite": 55.270105600357056
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "32": {
+                "first_response_ms": {
+                  "legacy": 56.10356852412224,
+                  "lite": 60.335089452564716
+                },
+                "last_response_ms": {
+                  "legacy": 83.79451930522919,
+                  "lite": 65.97904954105616
+                },
+                "p95_ms": {
+                  "legacy": 83.77569210715592,
+                  "lite": 65.95915472134948
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "64": {
+                "first_response_ms": {
+                  "legacy": 65.86527917534113,
+                  "lite": 100.54424777626991
+                },
+                "last_response_ms": {
+                  "legacy": 123.27655591070652,
+                  "lite": 108.61634276807308
+                },
+                "p95_ms": {
+                  "legacy": 123.23531289584935,
+                  "lite": 108.47333655692637
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              }
+            },
+            "s2_request_amplification": {
+              "0": {
+                "discovery": {
+                  "legacy": 0.0,
+                  "lite": 0.0
+                },
+                "jwks": {
+                  "legacy": 0.0,
+                  "lite": 0.0
+                },
+                "total_oidc": {
+                  "legacy": 0.0,
+                  "lite": 0.0
+                }
+              },
+              "1": {
+                "discovery": {
+                  "legacy": 1.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 1.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "5": {
+                "discovery": {
+                  "legacy": 5.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 5.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 10.0,
+                  "lite": 2.0
+                }
+              },
+              "10": {
+                "discovery": {
+                  "legacy": 10.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 10.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 20.0,
+                  "lite": 2.0
+                }
+              },
+              "20": {
+                "discovery": {
+                  "legacy": 20.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 20.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 40.0,
+                  "lite": 2.0
+                }
+              }
+            },
+            "s3_warm_flood": {
+              "100": {
+                "achieved_rps": {
+                  "legacy": 100.05352618807247,
+                  "lite": 100.0574716695064
+                },
+                "p50_ms": {
+                  "legacy": 3.4168861620128554,
+                  "lite": 3.109684251249245
+                },
+                "p95_ms": {
+                  "legacy": 4.251156628131669,
+                  "lite": 3.928751645609707
+                },
+                "p99_ms": {
+                  "legacy": 5.0822486750781515,
+                  "lite": 4.52503841072363
+                }
+              },
+              "300": {
+                "achieved_rps": {
+                  "legacy": 299.93066153660897,
+                  "lite": 299.9051118417806
+                },
+                "p50_ms": {
+                  "legacy": 2.3723193568487844,
+                  "lite": 2.3375464168685633
+                },
+                "p95_ms": {
+                  "legacy": 6.08831818339758,
+                  "lite": 3.2940905578426327
+                },
+                "p99_ms": {
+                  "legacy": 36.806463986758516,
+                  "lite": 25.607401716087992
+                }
+              },
+              "600": {
+                "achieved_rps": {
+                  "legacy": 599.7001742707907,
+                  "lite": 599.7104161080792
+                },
+                "p50_ms": {
+                  "legacy": 2.1472292083002387,
+                  "lite": 1.9319832821689253
+                },
+                "p95_ms": {
+                  "legacy": 146.63984577109431,
+                  "lite": 52.3544303271921
+                },
+                "p99_ms": {
+                  "legacy": 200.533763153975,
+                  "lite": 87.21291426109765
+                }
+              },
+              "900": {
+                "achieved_rps": {
+                  "legacy": 894.8186610737131,
+                  "lite": 899.1738588951825
+                },
+                "p50_ms": {
+                  "legacy": 34.1488342318268,
+                  "lite": 1.9293072219526142
+                },
+                "p95_ms": {
+                  "legacy": 425.15085895649185,
+                  "lite": 227.52238778397424
+                },
+                "p99_ms": {
+                  "legacy": 485.8783032024489,
+                  "lite": 299.09864978955846
+                }
+              }
+            },
+            "s4_event_loop_blocking": {
+              "worst_health_latency_ms": {
+                "legacy": 1074.8205399140716,
+                "lite": 7.8431470319628716
+              },
+              "health_p99_during_cold_load_ms": {
+                "legacy": 1062.8324660174546,
+                "lite": 3.913347337394957
+              },
+              "health_requests_over_100ms": {
+                "legacy": 40.0,
+                "lite": 0.0
+              },
+              "health_baseline_p50_ms": {
+                "legacy": 2.457220479846034,
+                "lite": 2.4709651246666713
+              }
+            },
+            "footprint": {
+              "distribution_count": {
+                "legacy": 41,
+                "lite": 18
+              },
+              "distribution_count_excluding_harness_overhead": {
+                "legacy": 37,
+                "lite": 14
+              },
+              "watched_present": {
+                "legacy": [
+                  "auto-name-enum",
+                  "pluggy",
+                  "py-buzz",
+                  "pytest",
+                  "python-jose",
+                  "respx",
+                  "snick"
+                ],
+                "lite": []
+              }
+            },
+            "memory": {
+              "baseline_idle_bytes": {
+                "legacy": 43089920,
+                "lite": 39100416
+              },
+              "warm_bytes": {
+                "legacy": 44482560,
+                "lite": 42774528
+              },
+              "import_modules_added": {
+                "legacy": 389,
+                "lite": 223
+              },
+              "import_rss_delta_kib": {
+                "legacy": 28384,
+                "lite": 19460
+              }
+            },
+            "call_graph": {
+              "warm_total_calls": {
+                "legacy": 952,
+                "lite": 799
+              },
+              "warm_max_depth": {
+                "legacy": 22,
+                "lite": 19
+              },
+              "warm_calls_auth_library": {
+                "legacy": 56,
+                "lite": 40
+              },
+              "warm_calls_jwt_layer": {
+                "legacy": 44,
+                "lite": 23
+              },
+              "warm_calls_library_and_jwt": {
+                "legacy": 100,
+                "lite": 63
+              },
+              "warm_calls_framework": {
+                "legacy": 93,
+                "lite": 99
+              },
+              "cold_total_calls": {
+                "legacy": 34033,
+                "lite": 5002
+              },
+              "reachable_from_call": {
+                "legacy": 24,
+                "lite": 27
+              }
+            },
+            "profile_sampling": {
+              "loop_thread_samples": {
+                "legacy": 1563,
+                "lite": 1558
+              },
+              "loop_thread_samples_idle_in_selector": {
+                "legacy": 1309,
+                "lite": 1513
+              },
+              "loop_thread_samples_busy": {
+                "legacy": 254,
+                "lite": 45
+              },
+              "loop_thread_samples_in_blocking_http_client": {
+                "legacy": 200,
+                "lite": 0
+              },
+              "worker_thread_samples_in_blocking_http_client": {
+                "legacy": 0,
+                "lite": 196
+              },
+              "worst_health_ms": {
+                "legacy": 1061.7290096357465,
+                "lite": 4.321223497390836
+              },
+              "cold_auth_request_ms": {
+                "legacy": 1069.1742170602083,
+                "lite": 1058.1441251561046
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

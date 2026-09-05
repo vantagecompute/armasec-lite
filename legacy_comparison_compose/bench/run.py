@@ -1,6 +1,13 @@
 """
 The scenario driver: pick scenarios, run them, write result files, print a summary.
 
+Every run keeps its own directory. The files land in
+`results/v<armasec-lite version>/<timestamp>-<host>/`, both parts taken from the run's own
+provenance, and `results/index.json` is rebuilt from the whole tree afterwards. No run ever
+overwrites another, so a regression between two versions is visible in the repository rather
+than only in whoever ran it last. See `bench/runs.py` for the layout and why the version is
+the parent.
+
 Run inside the `bench` container, which sits on the compose network and reaches the two
 application arms by service name. It needs the Docker socket for two reasons and no others:
 three scenarios restart application containers between repetitions, and the provenance block
@@ -29,7 +36,7 @@ import sys
 import time
 import traceback
 
-from bench import report, scenarios
+from bench import report, runs, scenarios
 
 #: Runs in this order for the reasons given in the module docstring.
 DEFAULT_ORDER = ("s4", "s3", "s1", "s2", "s8", "footprint", "memory", "callgraph", "profile")
@@ -60,7 +67,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--out",
         default=os.environ.get("HARNESS_RESULTS_DIR", "/results"),
-        help="directory to write result files into",
+        help="the results root; this run gets its own directory beneath it",
     )
     return parser.parse_args(argv)
 
@@ -91,6 +98,11 @@ def main(argv: list[str]) -> int:
     versions = scenarios.library_versions()
     provenance = report.provenance(docker, versions, args.reps)
 
+    # The run's own directory, named from its own provenance, created before the first
+    # scenario writes anything. Nothing this process writes can land on top of a previous
+    # run's files, which is the whole point of the layout: every run is kept.
+    run_directory = runs.allocate_run_directory(args.out, provenance)
+
     print("armasec-lite comparison harness")
     print(f"  host          {provenance['hostname']} ({provenance['cpu_count']} cores)")
     print(f"  cpu           {provenance['cpu_model']}")
@@ -102,6 +114,7 @@ def main(argv: list[str]) -> int:
     limits = provenance["app_container_limits"]["legacy"]
     print(f"  app limits    {limits['cpus']} cpus, {limits['mem_limit_bytes'] / 1e6:.0f}MB (both)")
     print(f"  repetitions   {args.reps}{' (quick mode)' if args.quick else ''}")
+    print(f"  results       {os.path.relpath(run_directory, args.out)}")
     print()
 
     summary: list[list[str]] = [["Measurement", "upstream armasec", "armasec-lite", "verdict"]]
@@ -120,10 +133,15 @@ def main(argv: list[str]) -> int:
         rows = document.pop("summary_rows", [])
         document["provenance"] = provenance
         document["elapsed_seconds"] = round(elapsed, 1)
-        path = os.path.join(args.out, f"{scenarios.FILENAMES[name]}.json")
+        path = os.path.join(run_directory, f"{scenarios.FILENAMES[name]}.json")
         report.write_result(path, document)
         summary.extend(rows)
         print(f"[{name}] done in {elapsed:.0f}s -> {path}\n", flush=True)
+
+    # Rebuilt from the whole tree rather than appended to, so the index can never carry a
+    # number that its own result files no longer support.
+    index_path = runs.write_index(args.out)
+    print(f"index rebuilt -> {index_path}", flush=True)
 
     print()
     print("=" * 100)
@@ -150,15 +168,21 @@ def _fix_result_ownership(directory: str) -> None:
     committed without an escalation. The bind-mounted directory already carries the right
     owner, so it is the answer rather than an environment variable that could drift.
 
+    Walks the tree, because a run now writes into `<version>/<run id>/` beneath the results
+    root rather than straight into it, and the directories it creates need the same owner as
+    the files inside them.
+
     Args:
-        directory: The results directory.
+        directory: The results root.
     """
     try:
         stat = os.stat(directory)
-        for name in os.listdir(directory):
-            path = os.path.join(directory, name)
-            if os.path.isfile(path):
-                os.chown(path, stat.st_uid, stat.st_gid)
+        for parent, directories, files in os.walk(directory):
+            for name in directories + files:
+                try:
+                    os.chown(os.path.join(parent, name), stat.st_uid, stat.st_gid)
+                except OSError:
+                    continue
     except OSError:
         pass
 
