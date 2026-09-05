@@ -1,0 +1,261 @@
+{
+  "scenario": "S8",
+  "title": "Failing provider with attacker-chosen unknown key ids",
+  "question": "While the JWKS endpoint is failing, does each unknown kid produce another outbound request?",
+  "config": {
+    "unknown_kid_requests_per_repetition": 60,
+    "fault": "500 on any path containing 'certs', discovery left working",
+    "counted_at": "the proxy, JWKS path only, measured from after a successful warmup",
+    "amplification_factor_if_unbounded": 60
+  },
+  "measurements": {
+    "jwks_fetches_during_flood": {
+      "legacy": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "spread_pct_of_median": null,
+        "values": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "lite": {
+        "median": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "spread_pct_of_median": 0.0,
+        "values": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    "amplification_ratio": {
+      "legacy": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "spread_pct_of_median": null,
+        "values": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "lite": {
+        "median": 0.016666666666666666,
+        "min": 0.016666666666666666,
+        "max": 0.016666666666666666,
+        "spread_pct_of_median": 0.0,
+        "values": [
+          0.016666666666666666,
+          0.016666666666666666,
+          0.016666666666666666,
+          0.016666666666666666,
+          0.016666666666666666
+        ]
+      }
+    },
+    "repetitions": {
+      "legacy": [
+        {
+          "warm_status": 200,
+          "oidc_after_warmup": {
+            "discovery": 1,
+            "jwks": 1,
+            "total_oidc": 2
+          },
+          "unknown_kid_requests": 60,
+          "jwks_fetches_during_flood": 0,
+          "discovery_fetches_during_flood": 0,
+          "statuses": {
+            "401": 60
+          }
+        },
+        {
+          "warm_status": 200,
+          "oidc_after_warmup": {
+            "discovery": 1,
+            "jwks": 1,
+            "total_oidc": 2
+          },
+          "unknown_kid_requests": 60,
+          "jwks_fetches_during_flood": 0,
+          "discovery_fetches_during_flood": 0,
+          "statuses": {
+            "401": 60
+          }
+        },
+        {
+          "warm_status": 200,
+          "oidc_after_warmup": {
+            "discovery": 1,
+            "jwks": 1,
+            "total_oidc": 2
+          },
+          "unknown_kid_requests": 60,
+          "jwks_fetches_during_flood": 0,
+          "discovery_fetches_during_flood": 0,
+          "statuses": {
+            "401": 60
+          }
+        },
+        {
+          "warm_status": 200,
+          "oidc_after_warmup": {
+            "discovery": 1,
+            "jwks": 1,
+            "total_oidc": 2
+          },
+          "unknown_kid_requests": 60,
+          "jwks_fetches_during_flood": 0,
+          "discovery_fetches_during_flood": 0,
+          "statuses": {
+            "401": 60
+          }
+        },
+        {
+          "warm_status": 200,
+          "oidc_after_warmup": {
+            "discovery": 1,
+            "jwks": 1,
+            "total_oidc": 2
+          },
+          "unknown_kid_requests": 60,
+          "jwks_fetches_during_flood": 0,
+          "discovery_fetches_during_flood": 0,
+          "statuses": {
+            "401": 60
+          }
+        }
+      ],
+      "lite": [
+        {
+          "warm_status": 200,
+          "oidc_after_warmup": {
+            "discovery": 1,
+            "jwks": 1,
+            "total_oidc": 2
+          },
+          "unknown_kid_requests": 60,
+          "jwks_fetches_during_flood": 1,
+          "discovery_fetches_during_flood": 0,
+          "statuses": {
+            "401": 60
+          }
+        },
+        {
+          "warm_status": 200,
+          "oidc_after_warmup": {
+            "discovery": 1,
+            "jwks": 1,
+            "total_oidc": 2
+          },
+          "unknown_kid_requests": 60,
+          "jwks_fetches_during_flood": 1,
+          "discovery_fetches_during_flood": 0,
+          "statuses": {
+            "401": 60
+          }
+        },
+        {
+          "warm_status": 200,
+          "oidc_after_warmup": {
+            "discovery": 1,
+            "jwks": 1,
+            "total_oidc": 2
+          },
+          "unknown_kid_requests": 60,
+          "jwks_fetches_during_flood": 1,
+          "discovery_fetches_during_flood": 0,
+          "statuses": {
+            "401": 60
+          }
+        },
+        {
+          "warm_status": 200,
+          "oidc_after_warmup": {
+            "discovery": 1,
+            "jwks": 1,
+            "total_oidc": 2
+          },
+          "unknown_kid_requests": 60,
+          "jwks_fetches_during_flood": 1,
+          "discovery_fetches_during_flood": 0,
+          "statuses": {
+            "401": 60
+          }
+        },
+        {
+          "warm_status": 200,
+          "oidc_after_warmup": {
+            "discovery": 1,
+            "jwks": 1,
+            "total_oidc": 2
+          },
+          "unknown_kid_requests": 60,
+          "jwks_fetches_during_flood": 1,
+          "discovery_fetches_during_flood": 0,
+          "statuses": {
+            "401": 60
+          }
+        }
+      ]
+    }
+  },
+  "verdicts": {
+    "jwks_fetches": "no winner declared (upstream median 0, armasec-lite median 1): upstream armasec makes zero JWKS fetches here because it never attempts a refetch on an unknown kid at all, which also means it cannot recover from a genuine key rotation without a process restart; armasec-lite makes exactly one bounded fetch across all 60 attacker-chosen unknown key ids, which is the refresh rate limit doing its job"
+  },
+  "provenance": {
+    "timestamp_utc": "2026-09-05T01:08:45+00:00",
+    "hostname": "raton-actions-00",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+    "cpu_count": 8,
+    "memory_total_bytes": 33284620288,
+    "kernel": "6.8.0-134-generic",
+    "operating_system": "Ubuntu 24.04.4 LTS",
+    "docker_version": "29.6.0",
+    "docker_api_version": "1.55",
+    "repetitions": 5,
+    "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+    "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+    "keycloak_repo_digests": [
+      "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+    ],
+    "library_versions": {
+      "legacy": "legacy 3.0.3",
+      "lite": "lite 0.1.0"
+    },
+    "app_container_limits": {
+      "identical": true,
+      "legacy": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-legacy",
+        "image_id": "sha256:3ea7b80a8680fecb665367a2561c17686c0ce4042caae04423f5a735bd5a453b"
+      },
+      "lite": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-lite",
+        "image_id": "sha256:43636120e7c93c5a7e600ea314bf69d328a2d116f91867ded1d943f49dc2e405"
+      }
+    }
+  },
+  "elapsed_seconds": 19.1
+}

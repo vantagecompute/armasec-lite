@@ -1,0 +1,172 @@
+{
+  "scenario": "footprint",
+  "title": "Installed distributions per arm, measured inside the running containers",
+  "question": "How many distributions does each arm actually install?",
+  "config": {
+    "measured_with": "importlib.metadata.distributions() inside each app container",
+    "harness_overhead_excluded_from_adjusted_count": [
+      "pip",
+      "setuptools",
+      "wheel",
+      "uvicorn",
+      "click",
+      "h11"
+    ],
+    "watched_packages": [
+      "pytest",
+      "respx",
+      "python-jose",
+      "py-buzz",
+      "snick",
+      "auto-name-enum",
+      "pluggy"
+    ]
+  },
+  "measurements": {
+    "legacy": {
+      "distribution_count": 41,
+      "distribution_count_excluding_harness_overhead": 37,
+      "watched_packages": {
+        "pytest": "8.4.2",
+        "respx": "0.23.1",
+        "python-jose": "3.5.0",
+        "py-buzz": "7.3.0",
+        "snick": "2.2.0",
+        "auto-name-enum": "3.0.0",
+        "pluggy": "1.6.0"
+      },
+      "watched_present": [
+        "auto-name-enum",
+        "pluggy",
+        "py-buzz",
+        "pytest",
+        "python-jose",
+        "respx",
+        "snick"
+      ],
+      "distributions": {
+        "annotated-doc": "0.0.5",
+        "annotated-types": "0.8.0",
+        "anyio": "4.15.0",
+        "armasec": "3.0.3",
+        "auto-name-enum": "3.0.0",
+        "certifi": "2026.7.22",
+        "cffi": "2.1.1",
+        "click": "8.5.0",
+        "cryptography": "50.0.1",
+        "ecdsa": "0.19.2",
+        "fastapi": "0.141.1",
+        "h11": "0.16.0",
+        "httpcore": "1.0.9",
+        "httpx": "0.28.1",
+        "idna": "3.19",
+        "iniconfig": "2.3.0",
+        "markdown-it-py": "4.2.0",
+        "mdurl": "0.1.2",
+        "packaging": "26.3",
+        "pip": "25.0.1",
+        "pluggy": "1.6.0",
+        "pprintpp": "0.4.0",
+        "py-buzz": "7.3.0",
+        "pyasn1": "0.6.4",
+        "pycparser": "3.0",
+        "pydantic": "2.13.5",
+        "pydantic_core": "2.46.5",
+        "pygments": "2.21.0",
+        "pytest": "8.4.2",
+        "python-jose": "3.5.0",
+        "respx": "0.23.1",
+        "rich": "15.0.0",
+        "rsa": "4.9.1",
+        "shellingham": "1.5.4",
+        "six": "1.17.0",
+        "snick": "2.2.0",
+        "starlette": "1.6.0",
+        "typer": "0.27.2",
+        "typing-inspection": "0.4.4",
+        "typing_extensions": "4.16.0",
+        "uvicorn": "0.52.4"
+      }
+    },
+    "lite": {
+      "distribution_count": 18,
+      "distribution_count_excluding_harness_overhead": 14,
+      "watched_packages": {
+        "pytest": null,
+        "respx": null,
+        "python-jose": null,
+        "py-buzz": null,
+        "snick": null,
+        "auto-name-enum": null,
+        "pluggy": null
+      },
+      "watched_present": [],
+      "distributions": {
+        "annotated-doc": "0.0.5",
+        "annotated-types": "0.8.0",
+        "anyio": "4.15.0",
+        "armasec-lite": "0.1.0",
+        "cffi": "2.1.1",
+        "click": "8.5.0",
+        "cryptography": "50.0.1",
+        "fastapi": "0.141.1",
+        "h11": "0.16.0",
+        "idna": "3.19",
+        "pip": "25.0.1",
+        "pycparser": "3.0",
+        "pydantic": "2.13.5",
+        "pydantic_core": "2.46.5",
+        "starlette": "1.6.0",
+        "typing-inspection": "0.4.4",
+        "typing_extensions": "4.16.0",
+        "uvicorn": "0.52.4"
+      }
+    }
+  },
+  "verdicts": {
+    "distribution_count": "upstream 41 vs armasec-lite 18"
+  },
+  "provenance": {
+    "timestamp_utc": "2026-09-05T00:33:09+00:00",
+    "hostname": "raton-actions-00",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+    "cpu_count": 8,
+    "memory_total_bytes": 33284620288,
+    "kernel": "6.8.0-134-generic",
+    "operating_system": "Ubuntu 24.04.4 LTS",
+    "docker_version": "29.6.0",
+    "docker_api_version": "1.55",
+    "repetitions": 5,
+    "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+    "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+    "keycloak_repo_digests": [
+      "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+    ],
+    "library_versions": {
+      "legacy": "legacy 3.0.3",
+      "lite": "lite 0.1.0"
+    },
+    "app_container_limits": {
+      "identical": true,
+      "legacy": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-legacy",
+        "image_id": "sha256:3ea7b80a8680fecb665367a2561c17686c0ce4042caae04423f5a735bd5a453b"
+      },
+      "lite": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-lite",
+        "image_id": "sha256:43636120e7c93c5a7e600ea314bf69d328a2d116f91867ded1d943f49dc2e405"
+      }
+    }
+  },
+  "elapsed_seconds": 1.2
+}
