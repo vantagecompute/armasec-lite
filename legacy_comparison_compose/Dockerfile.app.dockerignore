@@ -1,0 +1,15 @@
+# Scoped to Dockerfile.app, so the repository root needs no .dockerignore of its own.
+# The build context is the repository root but the image needs only pyproject.toml,
+# README.md, armasec_lite/ and legacy_comparison_compose/app/main.py.
+.git
+.worktrees
+docusaurus
+docs
+examples
+tests
+.github
+uv.lock
+justfile
+**/__pycache__
+**/*.pyc
+legacy_comparison_compose/results
