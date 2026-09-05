@@ -76,7 +76,11 @@ typecheck:
 # Everything the "check" CI job runs, plus the synth and catalog jobs it does not share
 # a runner with. Not everything CI runs: commitlint needs the PR's base and head shas,
 # which only exist in CI's checkout.
-check: lint typecheck test-unit test-functional infra-test catalog-check
+# Narrowed from the vantage-mcp-infra original: this repo has no tests/functional, no
+# infra/ and no catalog/, so test-functional, infra-test and catalog-check fail on a missing
+# path rather than a real defect. `just release` gates on this recipe, so leaving them in
+# made every release abort after the version bump and before the commit.
+check: lint typecheck test-unit
 
 # --- tests ---------------------------------------------------------------------------
 
