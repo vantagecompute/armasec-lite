@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from collections.abc import Iterable
@@ -52,8 +53,8 @@ PAGES_DIR = os.path.join(DOCUSAURUS, "docs", "benchmarks")
 CHARTS_DIR = os.path.join(DOCUSAURUS, "static", "charts")
 
 #: How each scenario file is titled on the page, and the order the page walks them in. The
-#: order is editorial: the headline first, its independent corroboration next, then the
-#: exact results, then the ones that need the most care.
+#: order is editorial: the headline first, the second instrument on the same question next,
+#: then the exact results, then the ones that need the most care.
 SCENARIO_ORDER = (
     "s4_event_loop_blocking",
     "profile_sampling",
@@ -71,6 +72,16 @@ LABELS = charts.ARM_LABELS
 #: The same names, capitalised, for the start of a sentence. `armasec-lite` is a package
 #: name and keeps its lower case everywhere, including here.
 LEAD = {"legacy": "Upstream armasec", "lite": "armasec-lite"}
+
+#: Scenarios that take one observation of one process rather than a set of repetitions.
+#: Their numbers carry no spread, and a number without a spread must not be set beside
+#: numbers with one and left to read as equally solid. Every page element that would
+#: otherwise imply repetitions for these, the figure captions included, says otherwise.
+SINGLE_OBSERVATION = ("profile_sampling", "call_graph")
+
+#: Matches a multiplier the harness put in a verdict string, such as `137.04x`. Used to
+#: find the places a bare ratio would otherwise be published.
+RATIO = re.compile(r"\d+(?:\.\d+)?x\b")
 
 
 class GenerationError(RuntimeError):
@@ -186,6 +197,42 @@ def escape(text: str) -> str:
 # --------------------------------------------------------------------------------------
 
 
+def validate_run(run: dict[str, Any], directory: str) -> None:
+    """
+    Check one run against the scenario set a complete run writes, and record the gap.
+
+    The build's own completeness check counts generated pages, so a run directory missing a
+    scenario file produces a page and passes. This is the check that sees it. It does not
+    fail the build: re-running one scenario after a harness correction is a supported and
+    deliberate workflow, `newest_per_scenario` exists to serve it, and the committed tree is
+    in exactly that state, so failing here would break the build on the repository's own
+    current contents for something that is not a defect. What it does instead is set
+    `missing` from the authoritative scenario list rather than from the index's bookkeeping,
+    so the run page can render the gap as a gap. The case that really does leave a hole, a
+    scenario absent from every run of the newest version, still fails the build in
+    `load_runs`.
+
+    Args:
+        run:       A loaded run, its `documents` already attached.
+        directory: The run's directory, for the error message.
+
+    Raises:
+        GenerationError: The run holds a result file that is not a known scenario, which
+            means the scenario list and the harness have drifted apart and the page would
+            silently omit whatever the new file holds.
+    """
+    recorded = set(run["documents"])
+    unexpected = sorted(recorded - set(layout.SCENARIO_FILES))
+    if unexpected:
+        raise GenerationError(
+            f"{directory} holds result files this page does not know how to present: "
+            f"{', '.join(unexpected)}. Add them to bench/runs.py's SCENARIO_FILES and give "
+            "them a section, or the page will publish a run while omitting part of it."
+        )
+    run["missing"] = [stem for stem in layout.SCENARIO_FILES if stem not in recorded]
+    run["complete"] = not run["missing"]
+
+
 def load_runs() -> dict[str, Any]:
     """
     Read the whole results tree, index and documents together.
@@ -220,6 +267,7 @@ def load_runs() -> dict[str, Any]:
                 if not isinstance(documents[stem].get("provenance"), dict):
                     raise GenerationError(f"{path} carries no provenance block")
             run["documents"] = documents
+            validate_run(run, directory)
             run["directory"] = directory
             run["version"] = version["version"]
             run["label"] = f"v{version['version']} {run['run_id']}"
@@ -273,24 +321,34 @@ def provenance_of(run: dict[str, Any]) -> dict[str, Any]:
     return run["provenance"]
 
 
-def caption(run: dict[str, Any]) -> str:
+def caption(run: dict[str, Any], stem: str | None = None) -> str:
     """
     Build the provenance caption that sits under every figure.
 
+    The repetition count in a run's provenance block is the harness's setting, not a
+    promise that every scenario used it. The profiler and call counting passes take one
+    observation each, so their captions say so rather than inheriting a repetition count
+    that never applied to them.
+
     Args:
-        run: The run the figure was built from.
+        run:  The run the figure was built from.
+        stem: The scenario the figure came from, when the caller knows it.
 
     Returns:
-        A single line naming the host, the date and both library versions.
+        A single line naming the host, the date, both library versions and the sample size.
     """
     block = provenance_of(run)
     when = str(block.get("timestamp_utc", "")).replace("+00:00", " UTC")
     versions = block.get("library_versions", {})
+    sample = (
+        "a single observation, no repetitions"
+        if stem in SINGLE_OBSERVATION
+        else f"{block.get('repetitions', '?')} repetitions"
+    )
     return (
-        f"{block.get('hostname', 'unknown host')}, {when}, "
+        f"Run {run['run_id']} on host {block.get('hostname', 'unknown')}, {when}. "
         f"{versions.get('legacy', 'upstream armasec')} against "
-        f"{versions.get('lite', 'armasec-lite')}, "
-        f"{block.get('repetitions', '?')} repetitions. Run {run['run_id']}."
+        f"{versions.get('lite', 'armasec-lite')}, {sample}."
     )
 
 
@@ -308,14 +366,20 @@ def verdict_rows(document: dict[str, Any]) -> list[list[str]]:
     deliberate. A generated page that reworded them would be free to make them sound more
     certain than the test that produced them.
 
+    The one thing added to a verdict is the injected provider delay, where the verdict
+    quotes a multiplier and the scenario injected one. That is not a rewording: the
+    multiplier is a function of the delay, and publishing it without the delay publishes a
+    parameter of this harness as though it were a characteristic of the libraries.
+
     Args:
         document: A parsed result file.
 
     Returns:
         Rows of `(measurement, verdict)`.
     """
+    config = document.get("config", {})
     return [
-        [f"`{name}`", escape(str(text))]
+        [f"`{name}`", annotate_injection(escape(str(text)), config)]
         for name, text in sorted(document.get("verdicts", {}).items())
     ]
 
@@ -365,6 +429,124 @@ def compare_phrase(verdict: str) -> str:
     if not verdict.strip():
         return "no verdict declared"
     return "within noise, the repetition ranges overlap" if is_noise(verdict) else escape(verdict)
+
+
+def injected_latency(config: dict[str, Any]) -> tuple[float, float | None] | None:
+    """
+    Read the provider delay a scenario injected, and how many fetches paid it.
+
+    The fetch count is derived from the total cold cost the scenario recorded, and is
+    `None` when the scenario did not record one. It is deliberately not defaulted: a made-up
+    fetch count would turn into a made-up sentence on the page, which is the failure mode
+    this whole generator exists to avoid.
+
+    Args:
+        config: A result file's `config` block.
+
+    Returns:
+        The injected delay in milliseconds and the number of fetches charged for it, or
+        `None` when the scenario injected nothing.
+    """
+    raw = config.get("injected_provider_latency_ms")
+    if raw is None:
+        return None
+    delay = float(raw)
+    if delay <= 0:
+        return None
+    total = config.get("expected_cold_fetch_cost_ms")
+    return delay, (float(total) / delay if total is not None else None)
+
+
+def annotate_injection(rendered: str, config: dict[str, Any]) -> str:
+    """
+    Attach a ratio's dependency to it, inside the same cell that quotes it.
+
+    A ratio between an arm that waits out an injected provider delay and an arm that does
+    not is a function of that delay. It is not a property of either library, and the
+    harness's verdict string states it bare. A bare multiplier is the number a reader
+    carries away, so every place one is published it is published with the delay it was
+    measured under standing next to it.
+
+    Args:
+        rendered: An already-rendered verdict, escaped and ready for the page.
+        config:   The `config` block of the file the verdict came from.
+
+    Returns:
+        The verdict, with the injected delay named beside any multiplier it contains.
+    """
+    injection = injected_latency(config)
+    if injection is None or not RATIO.search(rendered):
+        return rendered
+    delay, _ = injection
+    return f"{rendered}, with {count(delay)} ms injected per provider fetch"
+
+
+def with_injection(verdict: str, config: dict[str, Any]) -> str:
+    """
+    Render a verdict for prose, with any multiplier's dependency attached.
+
+    Args:
+        verdict: A verdict string from a result file.
+        config:  The same file's `config` block.
+
+    Returns:
+        A phrase suitable for a table cell or the middle of a sentence.
+    """
+    return annotate_injection(compare_phrase(verdict), config)
+
+
+def scaling_note(config: dict[str, Any], legacy_worst: float, lite_worst: float) -> str:
+    """
+    Say, in the reader's line of sight, that the headline ratio is a dial and not a finding.
+
+    The upstream arm's worst case tracks the injected delay because it waits for the whole
+    cold fetch; the armasec-lite arm's does not move with it at all. So the ratio between
+    them is close to linear in a parameter this harness picked. The two extrapolations
+    below are computed from this run's own measured values under exactly that model, and
+    the sentence says they are extrapolations rather than presenting them as measurements.
+
+    Args:
+        config:       The S4 `config` block.
+        legacy_worst: The upstream arm's measured worst `/health` latency, in milliseconds.
+        lite_worst:   The armasec-lite arm's measured worst `/health` latency.
+
+    Returns:
+        Markdown for the paragraph that follows the headline comparison.
+    """
+    injection = injected_latency(config)
+    if injection is None or lite_worst <= 0:
+        return ""
+    delay, fetches = injection
+    if fetches is None:
+        return (
+            "**The ratio between those two numbers is not a property of either library.** "
+            f"The upstream arm waits out the {count(delay)} ms this harness injects at the "
+            "provider and the armasec-lite arm does not, so the multiple is a function of "
+            "that injected delay and scales with it. It would be a different number against "
+            "a provider with different latency, with neither library behaving any "
+            "differently."
+        )
+
+    # What upstream's worst case would be at a different injected delay, holding everything
+    # this run measured fixed except the delay itself.
+    fixed = legacy_worst - fetches * delay
+
+    def projected(candidate: float) -> str:
+        return f"{(fixed + fetches * candidate) / lite_worst:,.0f}x"
+
+    lower = delay / 5.0
+    upper = delay * 4.0
+    return f"""**The ratio between those two numbers is not a property of either library.** It is the
+relationship above divided by a delay this harness chose: {count(delay)} ms held back per
+provider fetch across {count(fetches)} fetch{"" if fetches == 1 else "es"}, so {
+        count(float(config["expected_cold_fetch_cost_ms"]))
+    } ms of
+deliberately injected waiting. The numerator scales with that delay and the denominator does
+not, so the multiple scales with it too. Extrapolating this run's own numbers linearly in the
+injected delay, the same measurement would report roughly {projected(lower)} at {count(lower)} ms
+per fetch and roughly {projected(upper)} at {count(upper)} ms per fetch, with neither library
+behaving any differently. A reader quoting the multiple is quoting the harness's dial. The
+invariant in the paragraph above is the part that survives a change of provider."""
 
 
 # --------------------------------------------------------------------------------------
@@ -432,7 +614,7 @@ discovery and JWKS fetches through a proxy holding each response back by
                     "worst observed",
                     spread(worst["legacy"], ms),
                     spread(worst["lite"], ms),
-                    compare_phrase(verdicts.get("worst_health_latency", "")),
+                    with_injection(verdicts.get("worst_health_latency", ""), config),
                 ],
                 [
                     "requests slower than 100 ms",
@@ -443,31 +625,48 @@ discovery and JWKS fetches through a proxy holding each response back by
             ],
         )
     }
-Under {LABELS["legacy"]}, the worst request to a route with no authentication on it waited
-{ms(float(worst["legacy"]["median"]))}, against the {
+**The invariant is the finding.** Under {LABELS["legacy"]}, the worst request to a route with
+no authentication on it waited {ms(float(worst["legacy"]["median"]))}, against the {
         count(float(config["expected_cold_fetch_cost_ms"]))
-    } ms the two injected
-provider round trips were expected to cost. Under {LABELS["lite"]} the same request waited
-{ms(float(worst["lite"]["median"]))}. The cold work is the same
-work in both arms; the difference is which thread it runs on.
+    } ms
+the {
+        count(
+            float(config["expected_cold_fetch_cost_ms"])
+            / float(config["injected_provider_latency_ms"])
+        )
+    } injected
+provider round trips were expected to cost. Upstream's worst case on an unrelated,
+unauthenticated route is approximately the full cold OIDC fetch cost, so it inherits whatever
+latency the identity provider happens to have. Under {LABELS["lite"]} the same request waited
+{ms(float(worst["lite"]["median"]))}, which is its baseline: it does not move with the provider
+at all. The cold work is the same work in both arms; the difference is which thread it runs
+on, and that difference is what transfers to another provider and another machine.
+
+{scaling_note(config, float(worst["legacy"]["median"]), float(worst["lite"]["median"]))}
 
 <PlotlyChart
   src="{run["chart_url"]}/s4-health-latency.json"
   alt="Bar chart of /health latency percentiles for both libraries during a cold token validation, on a logarithmic scale"
-  provenance="{caption(run)}"
+  provenance="{caption(run, "s4_event_loop_blocking")}"
 />
 
 <PlotlyChart
   src="{run["chart_url"]}/s4-slow-health-requests.json"
   alt="Bar chart of the number of /health requests slower than 100 ms per repetition"
-  provenance="{caption(run)}"
+  provenance="{caption(run, "s4_event_loop_blocking")}"
 />
 """
 
 
 def section_profile(run: dict[str, Any]) -> str:
     """
-    Write the sampling profiler section, which corroborates S4 by a different method.
+    Write the sampling profiler section: the same question, asked with a second instrument.
+
+    The two instruments are independent methods and not independent experiments, and this
+    section says so. They ran in one harness, on one machine, in one process, from one run,
+    so a common-mode error in the harness would move both together. The section also states
+    that this pass carries no repetitions, because its headline count is the most quotable
+    number on the page and sits beside numbers that do have a spread.
 
     Args:
         run: The run whose profiler pass is being presented.
@@ -511,6 +710,18 @@ A separate pass repeats the S4 workload with a sampling profiler running inside 
 application: a daemon thread calling `sys._current_frames()` every {
         config["interval_ms"]:g} ms. This is a
 different instrument on the same question, and it agrees.
+
+:::caution[This pass is a single observation]
+
+Unlike every scenario with a repetition range beside it, the profiler pass ran once, on one
+process, and carries no repetitions and therefore no spread. The
+{count(float(legacy["loop_thread_samples_in_blocking_http_client"]))} loop-thread samples against
+{count(float(lite["loop_thread_samples_in_blocking_http_client"]))} is the most quotable figure on
+this page and it has the least statistical support behind it. Read the counts below as a
+description of where the work runs, not as a statistic. Nothing here says how much these
+counts would move on a second run, because there was no second run.
+
+:::
 
 {
         table(
@@ -566,19 +777,25 @@ whether everything else the process is serving waits for it. The blocking read h
 both arms; under {LABELS["lite"]} it happens on a worker thread, where the profiler counted
 {count(float(lite["worker_thread_samples_in_blocking_http_client"]))} samples of it.
 
-Two independent methods, a latency measurement from outside and a stack sample from inside,
-give the same answer. That agreement is the strongest evidence on this page.
+Two different measurement techniques, a latency measurement taken from outside the process
+and a stack sample taken from inside it, give the same answer. They are independent
+**methods**. They are not independent **experiments**: both were taken in the same harness,
+on the same machine, against the same workload, in the same process, so a common-mode error
+in the harness would move both together and their agreement would not reveal it. This is not
+corroboration by an independent party, and it is not two chances at being wrong reduced to
+one. It is two instruments on one bench agreeing, which is the strongest evidence on this
+page and still evidence of exactly that kind.
 
 <PlotlyChart
   src="{run["chart_url"]}/profile-loop-samples.json"
   alt="Stacked bar chart of event loop thread samples split into idle, busy, and inside a blocking HTTP client"
-  provenance="{caption(run)}"
+  provenance="{caption(run, "profile_sampling")}"
 />
 
 <PlotlyChart
   src="{run["chart_url"]}/profile-worst-health.json"
   alt="Bar chart comparing the worst health latency against the cold authenticated request latency for both libraries"
-  provenance="{caption(run)}"
+  provenance="{caption(run, "profile_sampling")}"
 />
 """
 
@@ -924,13 +1141,13 @@ treat it as a description of the code path rather than as a statistic.
 <PlotlyChart
   src="{run["chart_url"]}/call-graph-warm.json"
   alt="Bar chart of calls made serving one warm authenticated request, broken down by package"
-  provenance="{caption(run)}"
+  provenance="{caption(run, "call_graph")}"
 />
 
 <PlotlyChart
   src="{run["chart_url"]}/call-graph-static.json"
   alt="Bar chart of statically defined functions, internal call sites, reachable functions and warm call depth"
-  provenance="{caption(run)}"
+  provenance="{caption(run, "call_graph")}"
 />
 """
 
@@ -1337,7 +1554,17 @@ HEADER_IMPORT = 'import PlotlyChart from "@site/src/components/PlotlyChart";\n'
 
 def write_run_page(run: dict[str, Any], position: int) -> str:
     """
-    Write one run's own page: what it measured, on what, and with what result.
+    Write one run's own page: what it measured, on what machine, and with what result.
+
+    The host is named in the title, in the first line of prose and in the sidebar, not only
+    in the provenance table. Every number on the page is a property of that machine as much
+    as of the libraries, the run directory does not have to carry the hostname, and two runs
+    disagreeing because they ran on different machines is a thing a reader should be able to
+    notice without reading a table.
+
+    A run that recorded only some of the scenarios says so in a banner and in a table
+    covering all of them, so a partial run is visibly partial rather than merely shorter
+    than the others.
 
     Args:
         run:      A loaded run.
@@ -1346,40 +1573,64 @@ def write_run_page(run: dict[str, Any], position: int) -> str:
     Returns:
         The page body, for the caller to write out.
     """
+    block = provenance_of(run)
+    host = str(block.get("hostname", "an unknown host"))
+    when = str(block.get("timestamp_utc", "an unrecorded time")).replace("+00:00", " UTC")
     parts = [
         "---",
-        f'title: "{run["run_id"]}"',
-        f'sidebar_label: "v{run["version"]} {run["run_id"]}"',
+        f'title: "{run["run_id"]} on {host}"',
+        f'sidebar_label: "v{run["version"]} {run["run_id"]} ({host})"',
         f"sidebar_position: {position}",
-        (
-            f"description: One comparison run of armasec-lite {run['version']}, "
-            f"measured on {provenance_of(run).get('hostname', 'an unknown host')}."
-        ),
+        (f"description: One comparison run of armasec-lite {run['version']}, measured on {host}."),
         "---",
         "",
         HEADER_IMPORT,
-        f"# Run `{run['run_id']}`",
+        f"# Run `{run['run_id']}` on `{escape(host)}`",
         "",
         (
-            f"One comparison run of **armasec-lite {run['version']}** against upstream armasec. "
+            f"One comparison run of **armasec-lite {run['version']}** against upstream armasec, "
+            f"measured on **`{escape(host)}`** at {escape(when)}. "
             "Generated from this run's result files; nothing on this page was written by hand."
         ),
         "",
+        (
+            "**Every number below is a property of that machine as much as of the two "
+            "libraries.** Two runs can disagree because they ran on different hosts and for "
+            "no other reason, so check the host before setting this run against another one. "
+            "The run identifier is a timestamp and carries no machine name; this line and the "
+            "table below are where the machine is recorded.\n"
+        ),
         provenance_table(run),
     ]
 
-    recorded = ", ".join(f"`{stem}`" for stem in run["scenarios"])
     if run["missing"]:
-        absent = ", ".join(f"`{stem}`" for stem in run["missing"])
         parts.append(
-            f"This run recorded {len(run['scenarios'])} of the "
-            f"{len(layout.SCENARIO_FILES)} scenarios: {recorded}. It did not record {absent}. "
-            "A run measures whatever it was asked to measure; the "
-            "[summary](./index.mdx) draws each scenario from the most recent run of this "
-            "version that measured it.\n"
+            ":::warning[This run is partial]\n\n"
+            f"It recorded {len(run['scenarios'])} of the {len(layout.SCENARIO_FILES)} scenarios "
+            "a complete run writes. The absent ones were not measured on this host at this "
+            "time, so this page carries no result for them and neither does any comparison "
+            "drawn against this run. The [summary](./index.mdx) takes each scenario from the "
+            "most recent run of this version that measured it, which for the scenarios absent "
+            "here is a different run, possibly on a different machine.\n\n"
+            ":::\n"
         )
     else:
-        parts.append(f"This run recorded all {len(run['scenarios'])} scenarios: {recorded}.\n")
+        parts.append(
+            f"This run recorded all {len(layout.SCENARIO_FILES)} scenarios a complete run writes.\n"
+        )
+
+    parts.append(
+        table(
+            ["Scenario", "Recorded by this run"],
+            [
+                [
+                    f"`{stem}`",
+                    "yes" if stem in run["documents"] else "**no, not measured in this run**",
+                ]
+                for stem in layout.SCENARIO_FILES
+            ],
+        )
+    )
 
     for stem in SCENARIO_ORDER:
         if stem not in run["documents"]:
@@ -1392,11 +1643,36 @@ def write_run_page(run: dict[str, Any], position: int) -> str:
         parts.append("")
         parts.append(escape(str(document["question"])))
         parts.append("")
+        if stem in SINGLE_OBSERVATION:
+            parts.append(
+                "**One observation, no repetitions.** This scenario measures a single "
+                "process once, so its numbers carry no range and nothing here says how far "
+                "they would move on a second run.\n"
+            )
+        injection = injected_latency(document.get("config", {}))
+        if injection is not None:
+            delay, fetches = injection
+            charged = (
+                ""
+                if fetches is None
+                else f", charged {count(fetches)} time{'' if fetches == 1 else 's'}"
+            )
+            parts.append(
+                f"**This scenario injects latency at the provider:** {count(delay)} ms held "
+                f"back per fetch{charged}. Any latency or multiplier below that reflects a "
+                "cold fetch is a function of that injected delay and scales with it. It "
+                "describes this harness setting as much as it describes either library, and "
+                "it would be a different number against a provider with different latency.\n"
+            )
         if rows:
             parts.append(
-                "Verdicts as the harness recorded them. The test is a non-parametric "
-                "comparison of the observed repetition ranges, which errs toward calling a "
-                "difference noise.\n"
+                "Verdicts as the harness recorded them, reworded nowhere.\n"
+                if stem in SINGLE_OBSERVATION
+                else (
+                    "Verdicts as the harness recorded them. The test is a non-parametric "
+                    "comparison of the observed repetition ranges, which errs toward calling "
+                    "a difference noise.\n"
+                )
             )
             parts.append(table(["Measurement", "Verdict"], rows))
         else:
@@ -1408,7 +1684,7 @@ def write_run_page(run: dict[str, Any], position: int) -> str:
             parts.append(
                 f'<PlotlyChart\n  src="{run["chart_url"]}/{figure}.json"\n'
                 f'  alt="{figure.replace("-", " ")} for run {run["run_id"]}"\n'
-                f'  provenance="{caption(run)}"\n/>\n'
+                f'  provenance="{caption(run, stem)}"\n/>\n'
             )
 
     parts.append("## The raw files\n")
@@ -1416,24 +1692,70 @@ def write_run_page(run: dict[str, Any], position: int) -> str:
         "Every number above comes from "
         f"`legacy_comparison_compose/results/v{run['version']}/{run['run_id']}/`, which is "
         "committed to the repository. The page is regenerated from those files on every "
-        "documentation build and is not committed itself.\n"
+        "documentation build and is not committed itself. The directory name is an opaque "
+        "run identifier: the version, the timestamp and the host all come from the "
+        f"provenance block inside the files, which is why this page can say `{escape(host)}` "
+        "whatever the directory happens to be called.\n"
     )
     return "\n".join(parts)
 
 
 def trend_section(index: dict[str, Any], figures: dict[str, dict[str, Any]]) -> str:
     """
-    Write the section that compares runs against each other.
+    Write the section that compares runs against each other, when there is one to write.
+
+    The full section describes two kinds of comparison and carries the charts that make
+    them. Neither exists until some scenario has been measured twice, so until then the
+    section is a single paragraph saying it is empty rather than a description of a
+    capability the reader cannot exercise. A page that explains a feature nobody can use
+    reads as a page hiding how little data it has.
 
     Args:
         index:   The loaded index.
         figures: The trend figures that could be built, possibly none.
 
     Returns:
-        Markdown for the section, honest about what does not exist yet.
+        Markdown for the section, or for its absence.
     """
     total = index["run_count"]
     versions = index["version_count"]
+    runs_phrase = f"{total} run{'s' if total != 1 else ''}"
+    versions_phrase = f"{versions} version{'s' if versions != 1 else ''}"
+
+    if not figures:
+        repeated = [
+            stem
+            for stem in layout.SCENARIO_FILES
+            if sum(
+                1
+                for version in index["versions"]
+                for run in version["runs"]
+                if stem in run["scenarios"]
+            )
+            > 1
+        ]
+        also = (
+            (
+                " The scenarios measured by more than one run ("
+                + ", ".join(f"`{stem}`" for stem in repeated)
+                + ") record nothing this page tracks across runs, so they add no comparison "
+                "either."
+            )
+            if repeated
+            else ""
+        )
+        return f"""## Comparing runs against each other
+
+**There is nothing to compare yet, and this section is empty until there is.** The results
+tree holds {runs_phrase} across {versions_phrase}, and no measurement on this page has been
+taken by two runs that a reader could set against each other.{also}
+
+Every run is kept, so this section will fill in on its own the first time a scenario is
+measured twice, and it will describe what those comparisons show at that point rather than
+before. Until then, treat every number above as one measurement on one machine, with only
+its own repetition range to say how far it would move.
+"""
+
     lead = f"""## Comparing runs against each other
 
 Every run is kept, so this page can show change rather than only a snapshot. The two kinds
@@ -1442,18 +1764,8 @@ machine and by noise, which is how far a single number here should be trusted. T
 **different** versions differ by what changed in the library, which is how a regression we
 introduced ourselves becomes visible.
 
-There {"are" if total != 1 else "is"} {total} run{"s" if total != 1 else ""} committed, across
-{versions} version{"s" if versions != 1 else ""}.
+There {"are" if total != 1 else "is"} {runs_phrase} committed, across {versions_phrase}.
 """
-    if not figures:
-        return (
-            lead
-            + """
-No measurement has yet been taken more than once, so there is nothing to plot. The charts in
-this section appear on their own once a second run of any scenario is committed, and the
-first thing they will show is how much of the difference above was ever noise.
-"""
-        )
     body = "\n".join(
         f'<PlotlyChart\n  src="/charts/trends/{name}.json"\n'
         f'  alt="{name.replace("-", " ")} across every committed run"\n'
@@ -1484,18 +1796,51 @@ def write_index_page(index: dict[str, Any], figures: dict[str, dict[str, Any]]) 
     hosts = sorted({str(provenance_of(run).get("hostname", "unknown")) for run in chosen.values()})
 
     tree_rows = []
+    partial = 0
     for version in index["versions"]:
         for run in version["runs"]:
             block = provenance_of(run)
+            total = len(layout.SCENARIO_FILES)
+            coverage = f"{len(run['scenarios'])} of {total}"
+            if run["missing"]:
+                partial += 1
+                coverage = f"**{coverage}, partial**"
             tree_rows.append(
                 [
                     f"`{version['version']}`",
                     f"[`{run['run_id']}`](./{run['page_id']}.mdx)",
                     escape(str(block.get("timestamp_utc", "")).replace("+00:00", " UTC")),
                     f"`{escape(str(block.get('hostname', '?')))}`",
-                    f"{len(run['scenarios'])} of {len(layout.SCENARIO_FILES)}",
+                    coverage,
                 ]
             )
+
+    if partial == len(tree_rows):
+        how_many = "Every run above" if partial > 1 else "That run"
+    else:
+        how_many = f"{partial} of those {len(tree_rows)} runs"
+    partial_note = (
+        (
+            f"\n{how_many} recorded only some of the "
+            f"{len(layout.SCENARIO_FILES)} scenarios a complete run writes, which is marked "
+            "above and stated again on the run's own page. A partial run is normal: a single "
+            "scenario is sometimes re-run on its own after a harness correction. It matters "
+            "because a scenario absent from a run is absent from any comparison drawn against "
+            "that run.\n"
+        )
+        if partial
+        else ""
+    )
+
+    host_note = (
+        ""
+        if len(hosts) == 1
+        else (
+            "\nThe scenarios below were not all measured on the same machine. Two of these "
+            "numbers can differ because their runs used different hosts and for no other "
+            "reason, so the table above and each run page name the host.\n"
+        )
+    )
 
     sources = table(
         ["Scenario", "Drawn from run"],
@@ -1535,31 +1880,43 @@ for it.
 - **These numbers describe one machine running Docker.** Everything below was measured on
   `{escape(hosts[0])}`{"" if len(hosts) == 1 else " and " + ", ".join("`" + escape(h) + "`" for h in hosts[1:])},
   inside containers, with an identity provider on the same host. Absolute milliseconds will
-  not transfer to your hardware. **The ratio between the two arms is the part that
-  transfers**, and even that only for the workload described.
-- **Every measured value appears with the range its repetitions covered.** Where those ranges
-  overlap, the harness calls the difference noise and this page says "within noise" instead
-  of quoting a ratio. That test is deliberately blunt: {provenance_of(lead_run).get("repetitions", "?")}
+  not transfer to your hardware.
+- **Not every ratio transfers either.** Where a scenario injects a delay at the identity
+  provider, the ratio between the two arms is a function of the delay this harness chose,
+  and it is published with that delay named beside it every place it appears. What transfers
+  is the described relationship between each arm and the work: which thread it runs on,
+  whether the rest of the process waits for it, how many fetches it costs. Read those, not
+  the multipliers.
+- **Every repeated measurement appears with the range its repetitions covered.** Where those
+  ranges overlap, the harness calls the difference noise and this page says "within noise"
+  instead of quoting a ratio. That test is deliberately blunt: {provenance_of(lead_run).get("repetitions", "?")}
   repetitions cannot support anything finer.
 - **Counts are exact where they are exact.** The OIDC fetch counts in S2 and the JWKS fetch
   counts in S8 were taken at a proxy and repeated identically every time. They carry no
   spread because there was none.
+- **Some measurements have no repetitions at all.** The profiler pass and the call counting
+  pass each observe one process once. They are labelled where they appear, and a count with
+  no spread should not be read as firmly as one with a range beside it, however quotable it
+  is.
 - **Nothing here is hand-entered.** This page is generated from the JSON files under
   `legacy_comparison_compose/results/`, which are committed. If a number is on this page it
-  is in one of those files, and if a file goes missing the documentation build fails rather
-  than quietly dropping a section.
+  is in one of those files. A scenario with no measurement in any run of this version fails
+  the documentation build rather than quietly dropping a section, and a run that measured
+  only some of them is marked partial here and on its own page.
 
 ## What was measured, and when
 
 Results are stored one directory per run, under one directory per armasec-lite version, and
-every run is kept. The version and the timestamp both come from the run's own provenance
-block rather than from the working tree.
+every run is kept. The directory name is an opaque run identifier. The version, the
+timestamp and the host all come from the run's own provenance block rather than from the
+directory name or the working tree, which is why the host has a column of its own here and a
+line at the top of every run page.
 
-{table(["Version", "Run", "Measured at", "Host", "Scenarios"], tree_rows)}
+{table(["Version", "Run", "Measured at", "Host", "Scenarios"], tree_rows)}{partial_note}
 The summary below presents **armasec-lite {newest["version"]}**, taking each scenario from the most
 recent run of that version which measured it:
 
-{sources}""",
+{sources}{host_note}""",
     ]
 
     call_run = chosen.get("call_graph")
@@ -1580,6 +1937,12 @@ recent run of that version which measured it:
   this page to overread. They are a modest per-request difference amplified by one arm
   reaching its capacity ceiling while the other had not. The per-request difference is the
   finding; the multiple is an artefact of where the boundary fell on this machine.
+- **A latency multiple you can quote.** The S4 ratio between the two arms is the second
+  easiest thing here to overread. It is a function of the provider delay this harness
+  injected, it scales with that delay, and it would be a different number on a provider with
+  different latency. The transferable finding in S4 is that upstream's worst case on an
+  unauthenticated route tracks the full cold fetch cost while armasec-lite's stays at its
+  baseline. That is the sentence to carry away, not the multiplier.
 - **Anything about a machine that is not the one named above.** No cloud instance, no
   multi-host deployment, no provider across a real network.
 - **Anything about correctness.** These are performance and footprint measurements. The
@@ -1597,11 +1960,12 @@ up Keycloak and a counting proxy, and runs every scenario:
 just compare-legacy
 ```
 
-Each run writes into `legacy_comparison_compose/results/v<version>/<timestamp>-<host>/` and
-rebuilds `results/index.json` from the whole tree. Nothing is overwritten, and every run is
-meant to be committed, so that the next person to read this page can see whether the numbers
-moved. Regenerating these pages and their figures from the committed files, without running
-anything:
+Each run writes into `legacy_comparison_compose/results/v<version>/<run id>/` and rebuilds
+`results/index.json` from the whole tree. Nothing is overwritten, and every run is meant to
+be committed, so that the next person to read this page can see whether the numbers moved.
+The run id is a timestamp and nothing else has to be read out of it: these pages take the
+version, the date and the host from each run's provenance block. Regenerating these pages
+and their figures from the committed files, without running anything:
 
 ```bash
 just charts
