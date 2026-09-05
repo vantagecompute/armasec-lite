@@ -1,0 +1,31 @@
+{
+  "runs": [
+    {
+      "run_id": "2026-09-05T01-55-12Z",
+      "armasec_lite_version": "0.1.0",
+      "path": "v0.1.0/2026-09-05T01-55-12Z",
+      "timestamp_utc": "2026-09-05T01:55:12+00:00",
+      "hostname": "raton-actions-00",
+      "kernel": "6.8.0-134-generic",
+      "docker_version": "29.6.0",
+      "cgroup_version": "v2",
+      "repetitions": 5,
+      "quick": false,
+      "library_versions": {
+        "legacy": "legacy 3.0.3",
+        "lite": "lite 0.1.0"
+      },
+      "scenarios_requested": [
+        "s10",
+        "s9",
+        "s11"
+      ],
+      "scenarios_failed": [],
+      "files": {
+        "s10": "s10_cpu_during_cold_load.json",
+        "s9": "s9_cpu_per_request.json",
+        "s11": "s11_idle_cpu.json"
+      }
+    }
+  ]
+}

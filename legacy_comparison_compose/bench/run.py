@@ -13,8 +13,19 @@ docker compose run --rm bench --scenarios s4 --reps 1 --quick
 
 Scenario order is deliberate. S4 is the headline and runs first, while the machine is in
 whatever state the rest of the run will inherit rather than after twenty minutes of load.
-The measurement passes that instrument the applications (`memory`, `callgraph`, `profile`)
-run last, so nothing they perturb is still being timed.
+S10 follows it, because it is the same workload read through the kernel's CPU counter
+instead of a latency clock, and S9 follows S3 for the same reason. The measurement passes
+that instrument the applications (`memory`, `callgraph`, `profile`) run last, so nothing
+they perturb is still being timed.
+
+### Where the results go
+
+One directory per run, `results/v<version>/<UTC timestamp>/`, with the version read from the
+running armasec-lite image. A flat directory overwrote the evidence on every run, which made
+it impossible to say whether a number came from before or after a change.
+`results/index.json` carries one entry per run, so a directory of timestamped runs stays
+navigable without opening every file in it. The hostname is not in the path; it is in every
+result file's provenance block, which is where a reader comparing two machines will look.
 
 The run refuses to start if the two application containers do not carry identical CPU and
 memory limits, which `report.provenance` checks. An unfair comparison is worse than no
@@ -31,8 +42,23 @@ import traceback
 
 from bench import report, scenarios
 
-#: Runs in this order for the reasons given in the module docstring.
-DEFAULT_ORDER = ("s4", "s3", "s1", "s2", "s8", "footprint", "memory", "callgraph", "profile")
+#: Runs in this order for the reasons given in the module docstring. S10 sits beside S4
+#: because it is the same workload seen through a different counter, and S9 and S11 are
+#: grouped with it so the three CPU measurements share one thermal neighbourhood.
+DEFAULT_ORDER = (
+    "s4",
+    "s10",
+    "s3",
+    "s9",
+    "s1",
+    "s2",
+    "s8",
+    "s11",
+    "footprint",
+    "memory",
+    "callgraph",
+    "profile",
+)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -91,6 +117,16 @@ def main(argv: list[str]) -> int:
     versions = scenarios.library_versions()
     provenance = report.provenance(docker, versions, args.reps)
 
+    # One directory per run, filed under the version of armasec-lite that produced the
+    # numbers. A flat directory overwrites the evidence every time the library changes, and
+    # the version a run is filed under has to be the one the running image actually loaded.
+    version = scenarios.lite_version()
+    run_id = report.run_identifier()
+    run_dir = report.run_directory(args.out, version, run_id)
+    provenance["run_id"] = run_id
+    provenance["armasec_lite_version"] = version
+    provenance["quick_mode"] = args.quick
+
     print("armasec-lite comparison harness")
     print(f"  host          {provenance['hostname']} ({provenance['cpu_count']} cores)")
     print(f"  cpu           {provenance['cpu_model']}")
@@ -102,10 +138,16 @@ def main(argv: list[str]) -> int:
     limits = provenance["app_container_limits"]["legacy"]
     print(f"  app limits    {limits['cpus']} cpus, {limits['mem_limit_bytes'] / 1e6:.0f}MB (both)")
     print(f"  repetitions   {args.reps}{' (quick mode)' if args.quick else ''}")
+    print(
+        f"  cgroup        {provenance['cgroup']['version']} at "
+        f"{provenance['cgroup']['root_mounted_at']}"
+    )
+    print(f"  run           {run_id} -> {run_dir}")
     print()
 
     summary: list[list[str]] = [["Measurement", "upstream armasec", "armasec-lite", "verdict"]]
     failures: list[str] = []
+    written: dict[str, str] = {}
 
     for name in requested:
         print(f"[{name}] starting", flush=True)
@@ -120,10 +162,32 @@ def main(argv: list[str]) -> int:
         rows = document.pop("summary_rows", [])
         document["provenance"] = provenance
         document["elapsed_seconds"] = round(elapsed, 1)
-        path = os.path.join(args.out, f"{scenarios.FILENAMES[name]}.json")
+        filename = f"{scenarios.FILENAMES[name]}.json"
+        path = os.path.join(run_dir, filename)
         report.write_result(path, document)
+        written[name] = filename
         summary.extend(rows)
         print(f"[{name}] done in {elapsed:.0f}s -> {path}\n", flush=True)
+
+    report.update_index(
+        args.out,
+        {
+            "run_id": run_id,
+            "armasec_lite_version": version,
+            "path": os.path.relpath(run_dir, args.out),
+            "timestamp_utc": provenance["timestamp_utc"],
+            "hostname": provenance["hostname"],
+            "kernel": provenance["kernel"],
+            "docker_version": provenance["docker_version"],
+            "cgroup_version": provenance["cgroup"]["version"],
+            "repetitions": args.reps,
+            "quick": args.quick,
+            "library_versions": versions,
+            "scenarios_requested": requested,
+            "scenarios_failed": failures,
+            "files": written,
+        },
+    )
 
     print()
     print("=" * 100)
@@ -150,15 +214,21 @@ def _fix_result_ownership(directory: str) -> None:
     committed without an escalation. The bind-mounted directory already carries the right
     owner, so it is the answer rather than an environment variable that could drift.
 
+    Results now land in a `v<version>/<run-id>/` directory rather than beside each other, so
+    the walk is recursive and the directories it creates need the same treatment as the
+    files inside them.
+
     Args:
         directory: The results directory.
     """
     try:
         stat = os.stat(directory)
-        for name in os.listdir(directory):
-            path = os.path.join(directory, name)
-            if os.path.isfile(path):
-                os.chown(path, stat.st_uid, stat.st_gid)
+        for root, directories, files in os.walk(directory):
+            for name in directories + files:
+                try:
+                    os.chown(os.path.join(root, name), stat.st_uid, stat.st_gid)
+                except OSError:
+                    continue
     except OSError:
         pass
 

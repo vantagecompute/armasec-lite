@@ -28,16 +28,36 @@ x-app-environment: &app-environment
   # that sweep point nothing.
   HARNESS_SCOPE_ROUTES: "20"
 
+# The application health probe, and it is measured rather than assumed.
+#
+# It used to be `python -c 'import urllib.request; urllib.request.urlopen(...)'` on a three
+# second interval. That costs 287ms of CPU per probe, almost all of it importing `ssl`,
+# `email` and `http.client` into a fresh interpreter, and Docker charges it to the container
+# it probes. At a three second interval that is 9.6% of one core burned continuously in both
+# application containers. It never biased the latency comparison, because the two arms carry
+# the identical probe through this anchor, but scenarios S9 and S11 measure the CPU those
+# containers consume, and a 287ms spike landing unpredictably inside a ten second window
+# would have been a larger and noisier term than the per-request work being measured.
+#
+# Two changes. The probe speaks HTTP/1.0 over a bare socket, which costs 93ms rather than
+# 287ms because it imports `socket` and nothing else. And it runs on a sixty second interval
+# with a one second `start_interval`, so Docker probes every second while the container is
+# still starting, which is what `up --wait`, `depends_on: service_healthy` and the restarts
+# between repetitions need, and then once a minute forever after, which is all a liveness
+# signal needs. Scenarios that measure CPU count the probes that landed in their window from
+# the daemon's health log and report the number, so any residue is visible rather than
+# assumed away.
 x-app-healthcheck: &app-healthcheck
   test:
     - CMD
     - python
     - -c
-    - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=2)
-  interval: 3s
+    - 'import socket; c=socket.create_connection(("127.0.0.1",8000),2); c.sendall(b"GET /health HTTP/1.0\r\nHost: h\r\n\r\n"); assert b" 200 " in c.recv(128)'
+  interval: 60s
   timeout: 3s
-  retries: 20
-  start_period: 5s
+  retries: 5
+  start_period: 30s
+  start_interval: 1s
 
 services:
   keycloak:
@@ -149,6 +169,13 @@ services:
   # container resource limits and image digests for the provenance block; there is no other
   # way to do either from inside a container.
   #
+  # It also gets the host's cgroup v2 hierarchy, read only, because the CPU scenarios read
+  # each application container's `cpu.stat` and `memory.current` directly. Reading them with
+  # `docker exec` instead would charge the exec'd process's own CPU to the counter being
+  # read, in the arm being sampled and not in the other one, which is exactly the quantity
+  # those scenarios are comparing. Read only, and the bench container writes nothing to it
+  # except an attempted `memory.peak` reset that older kernels refuse.
+  #
   # Three CPUs, chosen so the generator cannot be the bottleneck: the arm under load has
   # one, only one arm is loaded at a time, and the host has eight.
   bench:
@@ -164,9 +191,11 @@ services:
       HARNESS_APP_PORT: "8000"
       HARNESS_COMPOSE_PROJECT: armasec-comparison
       HARNESS_RESULTS_DIR: /results
+      HARNESS_CGROUP_ROOT: /host/sys/fs/cgroup
     volumes:
       - ./results:/results
       - /var/run/docker.sock:/var/run/docker.sock
+      - /sys/fs/cgroup:/host/sys/fs/cgroup:ro
     depends_on:
       app-legacy:
         condition: service_healthy

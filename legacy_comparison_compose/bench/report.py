@@ -31,8 +31,11 @@ import datetime
 import http.client
 import json
 import os
+import re
 import socket
 from typing import Any
+
+from bench import cgroup
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -182,6 +185,39 @@ class Docker:
             The daemon's stats document.
         """
         return self.call("GET", f"/containers/{self.container_id(service)}/stats?stream=false")
+
+    def health_probes_since(self, service: str, wall: float) -> int:
+        """
+        Count the health probes the daemon has run on a container since a moment in time.
+
+        Docker charges a health probe's CPU to the container it probes, so a probe landing
+        inside a measurement window is CPU the application did not spend. The daemon keeps
+        the last five probe records with their start times, which at the sixty second probe
+        interval this stack uses covers any window a scenario measures several times over.
+
+        Args:
+            service: The compose service name.
+            wall:    A Unix timestamp. Probes started at or after it are counted.
+
+        Returns:
+            How many probes started inside the window. Zero when the daemon reports no
+            health state at all, which is the honest answer for a container without a
+            health check.
+        """
+        health = (self.inspect(service).get("State") or {}).get("Health") or {}
+        counted = 0
+        for entry in health.get("Log") or []:
+            # RFC3339 with nanoseconds, which `fromisoformat` will not take. Trimming the
+            # fraction to microseconds loses nothing: the comparison is against a window
+            # that is seconds long.
+            stamp = re.sub(r"(\.\d{6})\d+", r"\1", str(entry.get("Start", "")))
+            try:
+                started = datetime.datetime.fromisoformat(stamp)
+            except ValueError:
+                continue
+            if started.timestamp() >= wall:
+                counted += 1
+        return counted
 
     def raw_post(self, path: str, body: Any, timeout: float = 180.0) -> bytes:
         """
@@ -368,6 +404,21 @@ def provenance(docker: Docker, versions: dict[str, str], reps: int) -> dict[str,
     keycloak = docker.inspect("keycloak")
     image = docker.call("GET", f"/images/{_quote(keycloak['Image'])}/json")
 
+    # The CPU scenarios read the kernel's own per-container counters, so which hierarchy is
+    # mounted and whether `memory.peak` can be zeroed are facts about the run, not about the
+    # code, and belong beside the kernel version rather than inside one scenario's config.
+    cgroups: dict[str, Any] = {
+        "version": cgroup.cgroup_version(),
+        "root_mounted_at": cgroup.CGROUP_ROOT,
+        "memory_peak_resettable": None,
+    }
+    try:
+        cgroups["memory_peak_resettable"] = cgroup.Reader(
+            docker.container_id("app-legacy")
+        ).reset_peak()
+    except (RuntimeError, OSError):
+        cgroups["memory_peak_resettable"] = None
+
     return {
         "timestamp_utc": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "hostname": info.get("Name"),
@@ -384,6 +435,7 @@ def provenance(docker: Docker, versions: dict[str, str], reps: int) -> dict[str,
         "keycloak_repo_digests": image.get("RepoDigests", []),
         "library_versions": versions,
         "app_container_limits": {"identical": True, "legacy": legacy_limits, "lite": lite_limits},
+        "cgroup": cgroups,
     }
 
 
@@ -532,6 +584,89 @@ def write_result(path: str, document: dict[str, Any]) -> str:
         The path written, for logging.
     """
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(document, handle, indent=2, sort_keys=False)
+        handle.write("\n")
+    return path
+
+
+def run_identifier(when: datetime.datetime | None = None) -> str:
+    """
+    Name one run so that two runs can never collide and either can be found again.
+
+    A UTC timestamp to the second, and nothing else. The hostname used to be part of this,
+    because it is what made a run directory unique across machines, but a path is a poor
+    place to keep it: it leaked machine names into the repository tree and it is noise to
+    every reader who is not comparing two hosts. The hostname is still recorded, in every
+    result file's provenance block, where a reader who needs to know which machine produced
+    a number will find it rendered beside the number. Second precision makes a practical
+    collision impossible; two runs starting in the same second on one machine is not a case
+    worth engineering for.
+
+    The colons an ISO timestamp would carry are written as hyphens, because a colon in a
+    path name is legal on Linux and a nuisance everywhere else.
+
+    Args:
+        when: The instant to stamp, defaulting to now.
+
+    Returns:
+        An identifier such as `2026-09-05T01-42-07Z`.
+    """
+    moment = when or datetime.datetime.now(datetime.UTC)
+    return moment.strftime("%Y-%m-%dT%H-%M-%SZ")
+
+
+def run_directory(base: str, version: str, run_id: str) -> str:
+    """
+    Choose and create the directory one run's result files go into.
+
+    Results are filed under the version of `armasec-lite` that produced them, because a
+    number measured against one version says nothing about another and a flat directory
+    quietly overwrites the evidence every time the library changes.
+
+    Args:
+        base:    The results directory.
+        version: The version of armasec-lite the run measured.
+        run_id:  The run identifier.
+
+    Returns:
+        The absolute path of the created directory.
+    """
+    path = os.path.join(base, f"v{version}", run_id)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def update_index(base: str, entry: dict[str, Any]) -> str:
+    """
+    Record one run in the results index, replacing any earlier entry with the same id.
+
+    The index is what makes a directory of timestamped runs navigable without opening every
+    file in it. It is rewritten rather than appended to, so a run that is taken twice under
+    the same identifier leaves one entry rather than two contradictory ones.
+
+    Args:
+        base:  The results directory, where the index lives.
+        entry: The run's index entry.
+
+    Returns:
+        The path of the index file.
+    """
+    path = os.path.join(base, "index.json")
+    document: dict[str, Any] = {"runs": []}
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            if isinstance(loaded, dict) and isinstance(loaded.get("runs"), list):
+                document = loaded
+        except (OSError, ValueError):
+            document = {"runs": []}
+    runs = [run for run in document["runs"] if run.get("run_id") != entry.get("run_id")]
+    runs.append(entry)
+    runs.sort(key=lambda run: str(run.get("timestamp_utc", "")), reverse=True)
+    document["runs"] = runs
+    os.makedirs(base, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(document, handle, indent=2, sort_keys=False)
         handle.write("\n")
