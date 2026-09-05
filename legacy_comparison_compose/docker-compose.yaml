@@ -20,6 +20,13 @@ x-app-environment: &app-environment
   ARMASEC_AUDIENCE: armasec-api
   ARMASEC_USE_HTTPS: "false"
   ARMASEC_VERIFY_ISSUER: "true"
+  HARNESS_PROXY_URL: http://oidc-proxy:8080
+  # Scenario S2 counts OIDC fetches against the number of distinct lockdown() scope sets
+  # exercised, so it needs distinct scope sets to reach one at a time. All twenty are
+  # registered on both arms and the scenario calls the first N of them; a route that is
+  # never called never builds a loader, so registering more than a sweep point uses costs
+  # that sweep point nothing.
+  HARNESS_SCOPE_ROUTES: "20"
 
 x-app-healthcheck: &app-healthcheck
   test:
@@ -132,3 +139,51 @@ services:
         condition: service_healthy
     healthcheck: *app-healthcheck
     <<: *app-resources
+
+  # The load generator. Behind a profile so `docker compose up -d` brings up the stack
+  # without it, and it is run on demand with `docker compose run --rm bench`.
+  #
+  # It sits on the compose network and addresses the services by name, so its requests do
+  # not traverse the host's published port mappings. It gets the Docker socket because
+  # three of the scenarios restart application containers between repetitions and one reads
+  # container resource limits and image digests for the provenance block; there is no other
+  # way to do either from inside a container.
+  #
+  # Three CPUs, chosen so the generator cannot be the bottleneck: the arm under load has
+  # one, only one arm is loaded at a time, and the host has eight.
+  bench:
+    build:
+      context: .
+      dockerfile: Dockerfile.bench
+    profiles: ["bench"]
+    environment:
+      HARNESS_PROXY_HOST: oidc-proxy
+      HARNESS_PROXY_PORT: "8080"
+      HARNESS_LEGACY_HOST: app-legacy
+      HARNESS_LITE_HOST: app-lite
+      HARNESS_APP_PORT: "8000"
+      HARNESS_COMPOSE_PROJECT: armasec-comparison
+      HARNESS_RESULTS_DIR: /results
+    volumes:
+      - ./results:/results
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      app-legacy:
+        condition: service_healthy
+      app-lite:
+        condition: service_healthy
+    # One TCP connection per request is the right shape for an open-loop generator (see
+    # bench/scenarios.py), but it means the flood scenario opens hundreds of thousands of
+    # sockets, and the default ephemeral port range holds 28,232 of them against a 60
+    # second TIME_WAIT. Sustained load would exhaust it and the generator would start
+    # failing to connect, which would look exactly like the server refusing requests. Both
+    # settings are network-namespaced, so they apply to this container alone.
+    sysctls:
+      net.ipv4.ip_local_port_range: "10000 65000"
+      net.ipv4.tcp_tw_reuse: "1"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    cpus: 3.0
+    mem_limit: 1g

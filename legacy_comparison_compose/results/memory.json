@@ -1,0 +1,452 @@
+{
+  "scenario": "memory",
+  "title": "Resident memory idle, warm and under load, plus per-library import cost",
+  "question": "What does each arm cost to run, and does anything accumulate?",
+  "config": {
+    "measured_with": "the Docker daemon's container stats, never from inside the process",
+    "warm_requests": 200,
+    "load_rate_per_second": 300.0,
+    "load_seconds": 20.0,
+    "sample_interval_seconds": 2.0,
+    "separate_pass": "run with the latency scenarios idle, so sampling perturbs nothing"
+  },
+  "measurements": {
+    "legacy": {
+      "baseline_idle": {
+        "usage_bytes": 43089920,
+        "anon_bytes": 42532864,
+        "limit_bytes": 536870912,
+        "readings": [
+          {
+            "usage_bytes": 43089920,
+            "anon_bytes": 42532864,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 43089920,
+            "anon_bytes": 42532864,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 43089920,
+            "anon_bytes": 42532864,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          }
+        ]
+      },
+      "warm": {
+        "usage_bytes": 44482560,
+        "anon_bytes": 43925504,
+        "limit_bytes": 536870912,
+        "readings": [
+          {
+            "usage_bytes": 44482560,
+            "anon_bytes": 43925504,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 44482560,
+            "anon_bytes": 43925504,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 44482560,
+            "anon_bytes": 43925504,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          }
+        ]
+      },
+      "warm_requests_issued": 200,
+      "under_load": {
+        "rate_per_second": 300.0,
+        "seconds": 20.0,
+        "samples": [
+          {
+            "t": 1788569207.807613,
+            "usage_bytes": 44556288,
+            "anon_bytes": 43986944,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569211.8105965,
+            "usage_bytes": 55140352,
+            "anon_bytes": 53862400,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569214.8145072,
+            "usage_bytes": 44568576,
+            "anon_bytes": 44003328,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569217.817857,
+            "usage_bytes": 44572672,
+            "anon_bytes": 44011520,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569220.8214874,
+            "usage_bytes": 44843008,
+            "anon_bytes": 44011520,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569223.826529,
+            "usage_bytes": 44838912,
+            "anon_bytes": 44011520,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569226.8305311,
+            "usage_bytes": 44576768,
+            "anon_bytes": 44015616,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          }
+        ],
+        "peak_usage_bytes": 55140352,
+        "first_usage_bytes": 44556288,
+        "last_usage_bytes": 44576768,
+        "climb_bytes": 20480,
+        "climb_pct": 0.045964331678617396
+      },
+      "after_load": {
+        "usage_bytes": 44572672,
+        "anon_bytes": 44015616,
+        "limit_bytes": 536870912,
+        "readings": [
+          {
+            "usage_bytes": 44572672,
+            "anon_bytes": 44015616,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 44572672,
+            "anon_bytes": 44015616,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 44838912,
+            "anon_bytes": 44015616,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          }
+        ]
+      },
+      "import_cost": {
+        "lib": "legacy",
+        "rss_delta_kib": 28384,
+        "rss_after_kib": 58356,
+        "modules_before": 187,
+        "modules_after": 576,
+        "modules_added": 389,
+        "top_level_packages_added": [
+          "_cffi_backend",
+          "_compat_pickle",
+          "_csv",
+          "_decimal",
+          "_openssl",
+          "_pickle",
+          "_sysconfigdata__linux_x86_64-linux-gnu",
+          "_uuid",
+          "_zoneinfo",
+          "annotated_doc",
+          "annotated_types",
+          "anyio",
+          "armasec",
+          "auto_name_enum",
+          "buzz",
+          "click",
+          "colorsys",
+          "copy",
+          "cryptography",
+          "csv",
+          "dataclasses",
+          "decimal",
+          "fastapi",
+          "fractions",
+          "gettext",
+          "hmac",
+          "html",
+          "http",
+          "httpx",
+          "idna",
+          "importlib",
+          "jose",
+          "mimetypes",
+          "mmap",
+          "ntpath",
+          "numbers",
+          "pathlib",
+          "pickle",
+          "platform",
+          "pluggy",
+          "pprintpp",
+          "pydantic",
+          "pydantic_core",
+          "pygments",
+          "rich",
+          "secrets",
+          "shlex",
+          "snick",
+          "starlette",
+          "sysconfig",
+          "typing_extensions",
+          "typing_inspection",
+          "unicodedata",
+          "uuid",
+          "zipfile",
+          "zoneinfo"
+        ]
+      }
+    },
+    "lite": {
+      "baseline_idle": {
+        "usage_bytes": 39100416,
+        "anon_bytes": 38555648,
+        "limit_bytes": 536870912,
+        "readings": [
+          {
+            "usage_bytes": 39092224,
+            "anon_bytes": 38551552,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 39137280,
+            "anon_bytes": 38555648,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 39100416,
+            "anon_bytes": 38555648,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          }
+        ]
+      },
+      "warm": {
+        "usage_bytes": 42774528,
+        "anon_bytes": 42156032,
+        "limit_bytes": 536870912,
+        "readings": [
+          {
+            "usage_bytes": 42774528,
+            "anon_bytes": 42156032,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 42774528,
+            "anon_bytes": 42156032,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 42774528,
+            "anon_bytes": 42156032,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          }
+        ]
+      },
+      "warm_requests_issued": 200,
+      "under_load": {
+        "rate_per_second": 300.0,
+        "seconds": 20.0,
+        "samples": [
+          {
+            "t": 1788569255.4863951,
+            "usage_bytes": 42799104,
+            "anon_bytes": 42160128,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569259.4897025,
+            "usage_bytes": 42790912,
+            "anon_bytes": 42160128,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569262.4938426,
+            "usage_bytes": 42786816,
+            "anon_bytes": 42160128,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569265.498017,
+            "usage_bytes": 42786816,
+            "anon_bytes": 42160128,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569268.503519,
+            "usage_bytes": 42795008,
+            "anon_bytes": 42168320,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569271.5070307,
+            "usage_bytes": 42815488,
+            "anon_bytes": 42176512,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "t": 1788569274.512176,
+            "usage_bytes": 42815488,
+            "anon_bytes": 42176512,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          }
+        ],
+        "peak_usage_bytes": 42815488,
+        "first_usage_bytes": 42799104,
+        "last_usage_bytes": 42815488,
+        "climb_bytes": 16384,
+        "climb_pct": 0.03828117523207963
+      },
+      "after_load": {
+        "usage_bytes": 42803200,
+        "anon_bytes": 42176512,
+        "limit_bytes": 536870912,
+        "readings": [
+          {
+            "usage_bytes": 42795008,
+            "anon_bytes": 42176512,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 42803200,
+            "anon_bytes": 42176512,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          },
+          {
+            "usage_bytes": 42803200,
+            "anon_bytes": 42176512,
+            "file_bytes": 0,
+            "limit_bytes": 536870912
+          }
+        ]
+      },
+      "import_cost": {
+        "lib": "lite",
+        "rss_delta_kib": 19460,
+        "rss_after_kib": 49248,
+        "modules_before": 187,
+        "modules_after": 410,
+        "modules_added": 223,
+        "top_level_packages_added": [
+          "_cffi_backend",
+          "_csv",
+          "_decimal",
+          "_openssl",
+          "_sysconfigdata__linux_x86_64-linux-gnu",
+          "_uuid",
+          "_zoneinfo",
+          "annotated_doc",
+          "annotated_types",
+          "anyio",
+          "armasec_lite",
+          "colorsys",
+          "copy",
+          "cryptography",
+          "csv",
+          "dataclasses",
+          "decimal",
+          "fastapi",
+          "fractions",
+          "hmac",
+          "html",
+          "http",
+          "importlib",
+          "mimetypes",
+          "ntpath",
+          "numbers",
+          "pathlib",
+          "platform",
+          "pydantic",
+          "pydantic_core",
+          "secrets",
+          "shlex",
+          "starlette",
+          "sysconfig",
+          "typing_extensions",
+          "typing_inspection",
+          "uuid",
+          "zipfile",
+          "zoneinfo"
+        ]
+      }
+    }
+  },
+  "verdicts": {
+    "baseline": "upstream 43.1MB vs armasec-lite 39.1MB"
+  },
+  "provenance": {
+    "timestamp_utc": "2026-09-05T00:33:09+00:00",
+    "hostname": "raton-actions-00",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+    "cpu_count": 8,
+    "memory_total_bytes": 33284620288,
+    "kernel": "6.8.0-134-generic",
+    "operating_system": "Ubuntu 24.04.4 LTS",
+    "docker_version": "29.6.0",
+    "docker_api_version": "1.55",
+    "repetitions": 5,
+    "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+    "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+    "keycloak_repo_digests": [
+      "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+    ],
+    "library_versions": {
+      "legacy": "legacy 3.0.3",
+      "lite": "lite 0.1.0"
+    },
+    "app_container_limits": {
+      "identical": true,
+      "legacy": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-legacy",
+        "image_id": "sha256:3ea7b80a8680fecb665367a2561c17686c0ce4042caae04423f5a735bd5a453b"
+      },
+      "lite": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-lite",
+        "image_id": "sha256:43636120e7c93c5a7e600ea314bf69d328a2d116f91867ded1d943f49dc2e405"
+      }
+    }
+  },
+  "elapsed_seconds": 95.3
+}

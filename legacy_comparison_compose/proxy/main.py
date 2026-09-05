@@ -21,9 +21,14 @@ never counted, so a health check or a stats poll cannot pollute the numbers.
 | --- | --- | --- |
 | `/__stats` | GET | JSON: per-path counts, total, and the current latency and fault settings |
 | `/__latency?ms=N` | GET or POST | Set the delay injected before every forwarded request |
-| `/__fault?status=N&count=M` | GET or POST | Answer the next M forwarded requests with `status` instead of proxying. `status=0` clears |
+| `/__fault?status=N&count=M&path=S` | GET or POST | Answer the next M forwarded requests whose path contains `S` with `status` instead of proxying. `status=0` clears, an empty `path` matches every path |
 | `/__issuer?value=URL` | GET or POST | Rewrite the `issuer` field of the discovery document. An empty value clears it |
 | `/__reset` | GET or POST | Zero the counters. Latency, fault and issuer settings are deliberately left alone |
+
+The `path` filter on `/__fault` exists for scenario S8, which needs the JWKS route to fail
+while the discovery document keeps answering. Faulting every path instead would stop the
+application reaching the point where an unknown key id is even noticed, and the scenario
+would measure a broken provider rather than the refresh rate limit it is aimed at.
 
 `/__issuer` exists because the issuer is the one deliberate behavior difference between the
 two libraries: armasec-lite compares a token's `iss` to the provider's advertised issuer by
@@ -69,6 +74,7 @@ STATE: dict[str, Any] = {
     "latency_ms": 0,
     "fault_status": 0,
     "fault_remaining": 0,
+    "fault_path": "",
     "issuer_override": "",
 }
 
@@ -197,6 +203,7 @@ def _control(path: str, query: dict[str, list[str]], body: bytes) -> bytes | Non
                 "latency_ms": STATE["latency_ms"],
                 "fault_status": STATE["fault_status"],
                 "fault_remaining": STATE["fault_remaining"],
+                "fault_path": STATE["fault_path"],
                 "issuer_override": STATE["issuer_override"],
                 "upstream": f"{UPSTREAM_HOST}:{UPSTREAM_PORT}",
             },
@@ -213,9 +220,14 @@ def _control(path: str, query: dict[str, list[str]], body: bytes) -> bytes | Non
             STATE["fault_remaining"] = int(fields.get("count", 0)) if STATE["fault_status"] else 0
         except (TypeError, ValueError):
             return _respond(400, {"error": "status and count must be integers"})
+        STATE["fault_path"] = str(fields.get("path", "") or "") if STATE["fault_status"] else ""
         return _respond(
             200,
-            {"fault_status": STATE["fault_status"], "fault_remaining": STATE["fault_remaining"]},
+            {
+                "fault_status": STATE["fault_status"],
+                "fault_remaining": STATE["fault_remaining"],
+                "fault_path": STATE["fault_path"],
+            },
         )
     if path == "/__issuer":
         STATE["issuer_override"] = str(fields.get("value", "") or "")
@@ -314,7 +326,10 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
             STATE["total"] += 1
             if STATE["latency_ms"]:
                 await asyncio.sleep(STATE["latency_ms"] / 1000.0)
-            if STATE["fault_remaining"] > 0:
+            faulted = STATE["fault_remaining"] > 0 and (
+                not STATE["fault_path"] or STATE["fault_path"] in split.path
+            )
+            if faulted:
                 STATE["fault_remaining"] -= 1
                 response = _respond(STATE["fault_status"], {"error": "injected fault"})
             else:

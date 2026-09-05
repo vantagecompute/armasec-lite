@@ -42,6 +42,9 @@ RUN set -eux; \
     pip install "uvicorn==${UVICORN_VERSION}"
 
 COPY legacy_comparison_compose/app/main.py /srv/app/main.py
+# Run with `docker exec`, never imported by the server. Import cost has to be measured in a
+# bare interpreter, and a bare interpreter is only available from outside the running app.
+COPY legacy_comparison_compose/app/probe.py /srv/app/probe.py
 
 EXPOSE 8000
 

@@ -1,15 +1,20 @@
 # armasec-lite Design
 
 Date: 2026-09-04
-Status: Approved. The library is built and tested; two sections are specified but not yet
-built, and say so where they begin.
+Status: Approved. The library is built and tested; one section is specified but not yet
+built, and says so where it begins.
 
-**Build status.** `armasec_lite/`, its test suite, the documentation site and the release
-workflow exist and are described here as they actually behave. The **Benchmarks** and
-**Integration comparison harness** sections specify work that does not exist yet: there is
-no `benchmarks/` directory and, until the harness lands, no `legacy_comparison_compose/`
-either. Those sections are a design to build against, not a description of the tree. Read
-them in the future tense, and do not cite a number from them until a result file exists.
+**Build status.** `armasec_lite/`, its test suite, the documentation site, the release
+workflow and the **Integration comparison harness** exist and are described here as they
+actually behave. The harness lives in `legacy_comparison_compose/` and writes committed
+result files under `legacy_comparison_compose/results/`, one per scenario, each carrying its
+own provenance; `just compare-legacy` regenerates all of them.
+
+The **Benchmarks** section still specifies work that does not exist: there is no
+`benchmarks/` directory, so warm decode, the security matrix and the chart generator have no
+result files behind them. Read that section in the future tense and do not cite a number
+from it. The footprint figures it describes are measured by the harness instead, from inside
+the running containers, and do have a file behind them.
 
 ## Purpose
 
@@ -852,8 +857,15 @@ inheriting them from a transitive dependency. The matrix presents it that way.
 
 ## Integration comparison harness
 
-> **Not yet built.** This section specifies work that does not exist in the tree.
-> No published figure may cite it until its result files are committed.
+> **Built.** `legacy_comparison_compose/` implements this section. `just compare-legacy`
+> runs it end to end and writes `legacy_comparison_compose/results/*.json`, which are
+> committed and are the only source a published figure may cite. See that directory's
+> README for the scenarios, the methodology and what each result file contains. Two things
+> were added during implementation and are described there rather than here: a
+> path-selective fault knob on the proxy, without which S8 would fault the discovery
+> document too and never reach the code it is aimed at, and an in-process sampling profiler,
+> which corroborates the S4 result from inside the process by a method independent of the
+> load generator outside it.
 
 Two real FastAPI services under Docker Compose, one on upstream `armasec==3.0.3` and one
 on `armasec-lite`, authenticating against **a real Keycloak** and driven by a load

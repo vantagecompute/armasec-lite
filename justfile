@@ -66,11 +66,8 @@ lint:
 test-cov:
     uv run pytest tests/unit --cov=armasec_lite --cov-report=xml --junitxml=junit.xml
 
-# Compare against upstream armasec. Not implemented yet.
-compare-legacy:
-    @echo "The legacy comparison harness is not implemented yet."
-    @echo "See docs/superpowers/specs/2026-09-04-armasec-lite-design.md"
-    @exit 1
+# The comparison harness recipes live under "comparison harness" further down, next to
+# each other, because they share a compose stack and are only ever used together.
 
 # Type-check the workspace.
 typecheck:
@@ -288,6 +285,49 @@ docs-serve PORT=DOCS_PORT:
 # Type-check the Docusaurus config and sidebars.
 docs-typecheck:
     cd docusaurus && npm install && npm run typecheck
+
+# --- comparison harness --------------------------------------------------------------
+
+# Bring the four-service stack up and leave it running, for poking at by hand.
+compare-legacy-up:
+    cd legacy_comparison_compose && docker compose up -d --wait
+
+# Tear the stack down, dropping the Keycloak volume so the realm reimports next time.
+compare-legacy-down:
+    cd legacy_comparison_compose && docker compose down -v
+
+# The parity matrix. Needs the stack up.
+compare-legacy-parity:
+    uv run pytest legacy_comparison_compose/test_parity.py -v
+
+# Measure armasec-lite against upstream armasec, end to end, and write the result files.
+#
+# Builds both application images and the bench image, brings the stack up on health checks
+# rather than sleeps, runs every scenario, writes one JSON file per scenario into
+# legacy_comparison_compose/results/, prints a summary and tears the stack down. Takes
+# roughly forty minutes at the default five repetitions.
+#
+# Nothing here is a shortcut around the ground rule: every number in the docs comes out of
+# one of the files this writes. Pass REPS=1 SCENARIOS=s4 QUICK=--quick to check that the
+# harness works without pretending the output is a measurement.
+compare-legacy REPS="5" SCENARIOS="s4,s3,s1,s2,s8,footprint,memory,callgraph,profile" QUICK="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd legacy_comparison_compose
+    echo "==> building"
+    docker compose build
+    docker compose --profile bench build bench
+    echo "==> up"
+    docker compose up -d --wait
+    status=0
+    docker compose run --rm bench \
+        --reps {{REPS}} --scenarios {{SCENARIOS}} {{QUICK}} || status=$?
+    echo "==> down"
+    docker compose down -v
+    echo
+    echo "==> result files"
+    ls -l results/*.json
+    exit $status
 
 # --- infrastructure ------------------------------------------------------------------
 

@@ -1,0 +1,24 @@
+# The load generator and scenario driver.
+#
+# Standard library only, so there is no third-party HTTP client whose connection pooling,
+# retry policy or event loop integration could become part of the measurement. The
+# generator opens one connection per request over asyncio and speaks HTTP/1.1 by hand; see
+# bench/scenarios.py for why one connection per request is the right shape for an
+# open-loop generator.
+#
+# The build context is this directory, not the repository root: the bench image needs
+# nothing from the library under test. It measures both arms from outside, over the
+# network, exactly as any other client would.
+
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /bench
+
+COPY bench /bench/bench
+
+ENTRYPOINT ["python", "-u", "-m", "bench.run"]
+CMD []

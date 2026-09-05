@@ -28,11 +28,36 @@ claim. Without it every scope check in the harness would read an empty permissio
 
 `/health` also reports which library is loaded and at what version, which is how the
 parity tests confirm they are talking to the arm they think they are.
+
+`HARNESS_SCOPE_ROUTES` additionally registers that many routes, each locked down behind a
+scope set no token in the realm holds. Scenario S2 counts OIDC fetches against the number
+of distinct `lockdown()` calls exercised, so it needs distinct scope sets it can reach one
+at a time. They answer 403, which is fine and deliberate: a scope check happens after the
+token is decoded, so the OIDC configuration has already been loaded by the time the request
+is refused, which is the thing being counted.
+
+### The sampling profiler
+
+`GET /__profile/start` runs a daemon thread that wakes every few milliseconds, calls
+`sys._current_frames()` and tallies one stack signature per thread. It is off until
+started, so it costs nothing in the runs that do not ask for it.
+
+Sampling rather than instrumenting is the point. `cProfile` distorts the timings the
+harness exists to measure, and it cannot say what a process was doing while it was blocked,
+because a blocked call is a single event with no returns until it finishes. A sampler can:
+a thread stuck in a socket read still has a stack, and it appears in every sample taken
+while it is stuck. Tagging the event loop thread separately therefore gives a direct view
+of scenario S4 from the inside: samples landing in socket reads **on the loop thread** are
+an event loop that is not running anything else.
 """
 
 from __future__ import annotations
 
+import collections
 import os
+import sys
+import threading
+import time
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI
@@ -46,6 +71,8 @@ VERIFY_ISSUER = os.environ.get("ARMASEC_VERIFY_ISSUER", "true").strip().lower() 
     "true",
     "yes",
 )
+#: How many extra scope-locked routes to register, for scenario S2.
+SCOPE_ROUTES = int(os.environ.get("HARNESS_SCOPE_ROUTES", "0") or "0")
 
 if ARMASEC_LIB == "lite":
     from armasec_lite import (  # type: ignore[import-not-found]
@@ -165,3 +192,177 @@ async def whoami(payload: Annotated[TokenPayload, Depends(armasec.lockdown())]) 
         The decoded payload, minus the original token.
     """
     return payload_dict(payload)
+
+
+def scope_route(index: int) -> Any:
+    """
+    Build a route handler locked behind a scope set belonging to nobody.
+
+    The dependency is a local name, and `from __future__ import annotations` turns every
+    annotation into a string that FastAPI later resolves against module globals. An
+    `Annotated[..., Depends(dependency)]` annotation would therefore fail to resolve, so
+    the dependency is passed as a default value instead, which FastAPI reads directly.
+
+    Args:
+        index: Distinguishes this route's scope set from every other one.
+
+    Returns:
+        An async handler ready to be registered.
+    """
+    dependency = armasec.lockdown(f"harness:scope-{index}")
+
+    async def route(payload: TokenPayload = Depends(dependency)) -> Any:  # noqa: B008
+        return {"scope_set": index, "permissions": payload.permissions}
+
+    return route
+
+
+for _index in range(SCOPE_ROUTES):
+    app.get(f"/scope/{_index}")(scope_route(_index))
+
+
+#: Stack signature counts, keyed by (thread label, signature). Read under `PROFILE_LOCK`.
+PROFILE_COUNTS: collections.Counter[tuple[str, str]] = collections.Counter()
+PROFILE_LOCK = threading.Lock()
+PROFILE_STATE: dict[str, Any] = {"running": False, "interval_ms": 5.0, "samples": 0, "loop": 0}
+
+
+def thread_label(thread_id: int) -> str:
+    """
+    Name a thread for the profile report, calling out the event loop.
+
+    The distinction is the whole point of the measurement: work on the loop thread blocks
+    every other request in the process, and the same work on a worker thread does not.
+
+    Args:
+        thread_id: The identifier `sys._current_frames()` keyed the stack under.
+
+    Returns:
+        `loop` for the thread running the asyncio event loop, otherwise the thread's name
+        with its identifier, so worker threads stay distinguishable from each other.
+    """
+    if thread_id == PROFILE_STATE["loop"]:
+        return "loop"
+    for thread in threading.enumerate():
+        if thread.ident == thread_id:
+            return f"{thread.name}({thread_id})"
+    return f"unknown({thread_id})"
+
+
+def stack_signature(frame: Any, depth: int = 12) -> str:
+    """
+    Render a stack as a leaf-first, semicolon separated signature.
+
+    Leaf first because the innermost frame is what the thread is actually doing, and a
+    truncated signature should lose the uninformative uvicorn and asyncio scaffolding at
+    the bottom rather than the socket read at the top.
+
+    Args:
+        frame: The innermost frame, as `sys._current_frames()` returns it.
+        depth: How many frames to keep.
+
+    Returns:
+        Frames as `module:function:line`, innermost first.
+    """
+    parts: list[str] = []
+    current = frame
+    while current is not None and len(parts) < depth:
+        code = current.f_code
+        module = code.co_filename.rsplit("/", 1)[-1]
+        parts.append(f"{module}:{code.co_name}:{current.f_lineno}")
+        current = current.f_back
+    return ";".join(parts)
+
+
+def sampler() -> None:
+    """Sample every live stack until `PROFILE_STATE['running']` goes false."""
+    while PROFILE_STATE["running"]:
+        frames = sys._current_frames()
+        own = threading.get_ident()
+        with PROFILE_LOCK:
+            for thread_id, frame in frames.items():
+                if thread_id == own:
+                    continue
+                PROFILE_COUNTS[(thread_label(thread_id), stack_signature(frame))] += 1
+            PROFILE_STATE["samples"] += 1
+        time.sleep(PROFILE_STATE["interval_ms"] / 1000.0)
+
+
+@app.get("/__profile/start")
+async def profile_start(interval_ms: float = 5.0) -> dict[str, Any]:
+    """
+    Start the sampling profiler, recording which thread is the event loop.
+
+    The loop thread is identified from inside this handler, which runs on it. Nothing else
+    in the process can say so reliably: uvicorn's loop thread has no distinguishing name.
+
+    Args:
+        interval_ms: Milliseconds between samples.
+
+    Returns:
+        The profiler state after starting.
+    """
+    PROFILE_STATE["loop"] = threading.get_ident()
+    PROFILE_STATE["interval_ms"] = max(1.0, interval_ms)
+    if not PROFILE_STATE["running"]:
+        PROFILE_STATE["running"] = True
+        threading.Thread(target=sampler, name="pmp-sampler", daemon=True).start()
+    return {k: v for k, v in PROFILE_STATE.items()}
+
+
+@app.get("/__profile/stop")
+async def profile_stop() -> dict[str, Any]:
+    """
+    Stop the sampling profiler.
+
+    Returns:
+        The profiler state after stopping.
+    """
+    PROFILE_STATE["running"] = False
+    return {k: v for k, v in PROFILE_STATE.items()}
+
+
+@app.get("/__profile/reset")
+async def profile_reset() -> dict[str, Any]:
+    """
+    Drop every accumulated sample without stopping the profiler.
+
+    Returns:
+        The profiler state after clearing.
+    """
+    with PROFILE_LOCK:
+        PROFILE_COUNTS.clear()
+        PROFILE_STATE["samples"] = 0
+    return {k: v for k, v in PROFILE_STATE.items()}
+
+
+@app.get("/__profile")
+async def profile_read(top: int = 25) -> dict[str, Any]:
+    """
+    Report the most frequently sampled stack signatures, grouped by thread.
+
+    Args:
+        top: How many signatures to return per thread.
+
+    Returns:
+        The profiler state, the per-thread sample totals, and the top signatures for each
+        thread with their sample counts.
+    """
+    with PROFILE_LOCK:
+        snapshot = list(PROFILE_COUNTS.items())
+        state = {k: v for k, v in PROFILE_STATE.items()}
+    per_thread: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    for (label, signature), count in snapshot:
+        per_thread[label][signature] += count
+    return {
+        "state": state,
+        "lib": ARMASEC_LIB,
+        "totals": {label: sum(counts.values()) for label, counts in per_thread.items()},
+        "top": {
+            label: [
+                {"samples": count, "signature": signature}
+                for signature, count in counts.most_common(top)
+            ]
+            for label, counts in per_thread.items()
+        },
+    }
