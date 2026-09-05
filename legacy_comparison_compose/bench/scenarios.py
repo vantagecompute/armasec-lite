@@ -1083,6 +1083,17 @@ def s2_amplification(context: Context) -> dict[str, Any]:
 
 S8_UNKNOWN_KID_REQUESTS = 60
 
+#: A zero JWKS-fetch median for upstream is not a defended attack, it is a missing feature:
+#: upstream never attempts a refetch on an unknown kid, so it also cannot recover from a
+#: real key rotation without a process restart. armasec-lite's one fetch is 60 attacker-
+#: chosen unknown key ids collapsed by the refresh rate limit into a single bounded attempt.
+S8_ZERO_MEDIAN_EXPLANATION = (
+    "upstream armasec makes zero JWKS fetches here because it never attempts a refetch on "
+    "an unknown kid at all, which also means it cannot recover from a genuine key rotation "
+    "without a process restart; armasec-lite makes exactly one bounded fetch across all 60 "
+    "attacker-chosen unknown key ids, which is the refresh rate limit doing its job"
+)
+
 
 def s8_failing_provider(context: Context) -> dict[str, Any]:
     """
@@ -1173,13 +1184,23 @@ def s8_failing_provider(context: Context) -> dict[str, Any]:
             },
             "repetitions": per_arm,
         },
-        "verdicts": {"jwks_fetches": report.verdict(fetches["legacy"], fetches["lite"])},
+        "verdicts": {
+            "jwks_fetches": report.verdict(
+                fetches["legacy"],
+                fetches["lite"],
+                zero_means=S8_ZERO_MEDIAN_EXPLANATION,
+            )
+        },
         "summary_rows": [
             [
                 f"S8 JWKS fetches for {attempts} unknown kids",
                 f"{report.across_reps(fetches['legacy'])['median']:.0f}",
                 f"{report.across_reps(fetches['lite'])['median']:.0f}",
-                report.verdict(fetches["legacy"], fetches["lite"]),
+                report.verdict(
+                    fetches["legacy"],
+                    fetches["lite"],
+                    zero_means=S8_ZERO_MEDIAN_EXPLANATION,
+                ),
             ]
         ],
     }

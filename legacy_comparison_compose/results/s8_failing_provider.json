@@ -213,10 +213,10 @@
     }
   },
   "verdicts": {
-    "jwks_fetches": "legacy wins, ranges disjoint (one median is zero, no ratio)"
+    "jwks_fetches": "no winner declared (upstream median 0, armasec-lite median 1): upstream armasec makes zero JWKS fetches here because it never attempts a refetch on an unknown kid at all, which also means it cannot recover from a genuine key rotation without a process restart; armasec-lite makes exactly one bounded fetch across all 60 attacker-chosen unknown key ids, which is the refresh rate limit doing its job"
   },
   "provenance": {
-    "timestamp_utc": "2026-09-05T00:33:09+00:00",
+    "timestamp_utc": "2026-09-05T01:08:45+00:00",
     "hostname": "raton-actions-00",
     "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
     "cpu_count": 8,
@@ -257,5 +257,5 @@
       }
     }
   },
-  "elapsed_seconds": 17.2
+  "elapsed_seconds": 19.1
 }

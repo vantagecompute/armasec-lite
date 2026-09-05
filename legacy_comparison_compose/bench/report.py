@@ -460,7 +460,12 @@ def across_reps(values: list[float]) -> dict[str, Any]:
     }
 
 
-def verdict(legacy: list[float], lite: list[float], lower_is_better: bool = True) -> str:
+def verdict(
+    legacy: list[float],
+    lite: list[float],
+    lower_is_better: bool = True,
+    zero_means: str | None = None,
+) -> str:
     """
     Say whether a difference between two arms is real or within noise.
 
@@ -468,13 +473,25 @@ def verdict(legacy: list[float], lite: list[float], lower_is_better: bool = True
     and a harness that reports a difference its data does not carry is worse than one that
     reports none.
 
+    A zero median is a special case, not a footnote. A ratio to zero is undefined, but the
+    bigger problem is that "wins" implies the low number is the better outcome, and that is
+    not always true: a zero can mean the arm never attempted the behavior being measured at
+    all, which is a missing capability, not a superior one. `zero_means` lets a caller supply
+    that context; without it, this function cannot tell the two cases apart and says so
+    without declaring a winner.
+
     Args:
         legacy:          One value per repetition for the upstream arm.
         lite:            One value per repetition for the armasec-lite arm.
         lower_is_better: True for latencies and counts, False for throughput.
+        zero_means:      An explanation to surface, instead of a declared winner, when one
+                          arm's median is zero. Use this when a zero could reflect an absent
+                          behavior rather than a better outcome. Leave unset when zero is
+                          unambiguously the best possible value for the thing being measured.
 
     Returns:
-        A sentence naming the winner and the ratio, or saying the ranges overlap.
+        A sentence naming the winner and the ratio, a sentence stating both medians and the
+        supplied explanation with no winner declared, or saying the ranges overlap.
     """
     if not legacy or not lite:
         return "not measured"
@@ -489,6 +506,11 @@ def verdict(legacy: list[float], lite: list[float], lower_is_better: bool = True
         return "within noise (repetition ranges overlap)"
     high, low = legacy_stats["median"], lite_stats["median"]
     if high == 0 or low == 0:
+        if zero_means:
+            return (
+                f"no winner declared (upstream median {high:g}, armasec-lite median {low:g}): "
+                f"{zero_means}"
+            )
         winner = "lite" if (low < high) == lower_is_better else "legacy"
         return f"{winner} wins, ranges disjoint (one median is zero, no ratio)"
     ratio = high / low if high > low else low / high
