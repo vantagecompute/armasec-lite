@@ -1,0 +1,1207 @@
+{
+  "scenario": "S2",
+  "title": "Request amplification: OIDC fetches per distinct lockdown() scope set",
+  "question": "Does each distinct lockdown() scope set build its own OIDC loader and fetch the provider again?",
+  "config": {
+    "scope_set_counts": [
+      0,
+      1,
+      5,
+      10,
+      20
+    ],
+    "counted_at": "the proxy, per path, with counters reset before the restart",
+    "expected_statuses": "403, since no token in the realm holds these scopes",
+    "injected_provider_latency_ms": 0
+  },
+  "measurements": {
+    "scope_sets_0": {
+      "discovery": {
+        "legacy": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "spread_pct_of_median": null,
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "lite": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "spread_pct_of_median": null,
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "jwks": {
+        "legacy": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "spread_pct_of_median": null,
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "lite": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "spread_pct_of_median": null,
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "total_oidc": {
+        "legacy": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "spread_pct_of_median": null,
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        "lite": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "spread_pct_of_median": null,
+          "values": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      },
+      "wall_ms": {
+        "legacy": {
+          "median": 0.0015133991837501526,
+          "min": 0.000908970832824707,
+          "max": 0.004939734935760498,
+          "spread_pct_of_median": 266.33846153846156,
+          "values": [
+            0.0018207356333732605,
+            0.0010235235095024109,
+            0.004939734935760498,
+            0.000908970832824707,
+            0.0015133991837501526
+          ]
+        },
+        "lite": {
+          "median": 0.0016763806343078613,
+          "min": 0.0009490177035331726,
+          "max": 0.0032158568501472473,
+          "spread_pct_of_median": 135.22222222222223,
+          "values": [
+            0.0016763806343078613,
+            0.0029802322387695312,
+            0.0009490177035331726,
+            0.0032158568501472473,
+            0.0012330710887908936
+          ]
+        }
+      },
+      "repetitions": {
+        "legacy": [
+          {
+            "oidc_requests": {
+              "discovery": 0,
+              "jwks": 0,
+              "total_oidc": 0
+            },
+            "wall_ms": 0.0018207356333732605,
+            "statuses": []
+          },
+          {
+            "oidc_requests": {
+              "discovery": 0,
+              "jwks": 0,
+              "total_oidc": 0
+            },
+            "wall_ms": 0.0010235235095024109,
+            "statuses": []
+          },
+          {
+            "oidc_requests": {
+              "discovery": 0,
+              "jwks": 0,
+              "total_oidc": 0
+            },
+            "wall_ms": 0.004939734935760498,
+            "statuses": []
+          },
+          {
+            "oidc_requests": {
+              "discovery": 0,
+              "jwks": 0,
+              "total_oidc": 0
+            },
+            "wall_ms": 0.000908970832824707,
+            "statuses": []
+          },
+          {
+            "oidc_requests": {
+              "discovery": 0,
+              "jwks": 0,
+              "total_oidc": 0
+            },
+            "wall_ms": 0.0015133991837501526,
+            "statuses": []
+          }
+        ],
+        "lite": [
+          {
+            "oidc_requests": {
+              "discovery": 0,
+              "jwks": 0,
+              "total_oidc": 0
+            },
+            "wall_ms": 0.0016763806343078613,
+            "statuses": []
+          },
+          {
+            "oidc_requests": {
+              "discovery": 0,
+              "jwks": 0,
+              "total_oidc": 0
+            },
+            "wall_ms": 0.0029802322387695312,
+            "statuses": []
+          },
+          {
+            "oidc_requests": {
+              "discovery": 0,
+              "jwks": 0,
+              "total_oidc": 0
+            },
+            "wall_ms": 0.0009490177035331726,
+            "statuses": []
+          },
+          {
+            "oidc_requests": {
+              "discovery": 0,
+              "jwks": 0,
+              "total_oidc": 0
+            },
+            "wall_ms": 0.0032158568501472473,
+            "statuses": []
+          },
+          {
+            "oidc_requests": {
+              "discovery": 0,
+              "jwks": 0,
+              "total_oidc": 0
+            },
+            "wall_ms": 0.0012330710887908936,
+            "statuses": []
+          }
+        ]
+      }
+    },
+    "scope_sets_1": {
+      "discovery": {
+        "legacy": {
+          "median": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "lite": {
+          "median": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "jwks": {
+        "legacy": {
+          "median": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "lite": {
+          "median": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "total_oidc": {
+        "legacy": {
+          "median": 2.0,
+          "min": 2.0,
+          "max": 2.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            2.0,
+            2.0,
+            2.0,
+            2.0,
+            2.0
+          ]
+        },
+        "lite": {
+          "median": 2.0,
+          "min": 2.0,
+          "max": 2.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            2.0,
+            2.0,
+            2.0,
+            2.0,
+            2.0
+          ]
+        }
+      },
+      "wall_ms": {
+        "legacy": {
+          "median": 90.01654479652643,
+          "min": 55.45543599873781,
+          "max": 98.89566898345947,
+          "spread_pct_of_median": 48.258054208716906,
+          "values": [
+            90.01654479652643,
+            57.816118001937866,
+            91.37062169611454,
+            55.45543599873781,
+            98.89566898345947
+          ]
+        },
+        "lite": {
+          "median": 43.132622726261616,
+          "min": 40.94768688082695,
+          "max": 43.76277793198824,
+          "spread_pct_of_median": 6.526593731679804,
+          "values": [
+            43.5536140576005,
+            43.132622726261616,
+            41.1684475839138,
+            40.94768688082695,
+            43.76277793198824
+          ]
+        }
+      },
+      "repetitions": {
+        "legacy": [
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 90.01654479652643,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 57.816118001937866,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 91.37062169611454,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 55.45543599873781,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 98.89566898345947,
+            "statuses": [
+              403
+            ]
+          }
+        ],
+        "lite": [
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 43.5536140576005,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 43.132622726261616,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 41.1684475839138,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 40.94768688082695,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 43.76277793198824,
+            "statuses": [
+              403
+            ]
+          }
+        ]
+      }
+    },
+    "scope_sets_5": {
+      "discovery": {
+        "legacy": {
+          "median": 5.0,
+          "min": 5.0,
+          "max": 5.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            5.0,
+            5.0,
+            5.0,
+            5.0,
+            5.0
+          ]
+        },
+        "lite": {
+          "median": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "jwks": {
+        "legacy": {
+          "median": 5.0,
+          "min": 5.0,
+          "max": 5.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            5.0,
+            5.0,
+            5.0,
+            5.0,
+            5.0
+          ]
+        },
+        "lite": {
+          "median": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "total_oidc": {
+        "legacy": {
+          "median": 10.0,
+          "min": 10.0,
+          "max": 10.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "lite": {
+          "median": 2.0,
+          "min": 2.0,
+          "max": 2.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            2.0,
+            2.0,
+            2.0,
+            2.0,
+            2.0
+          ]
+        }
+      },
+      "wall_ms": {
+        "legacy": {
+          "median": 225.0883737578988,
+          "min": 149.28019419312477,
+          "max": 284.6206473186612,
+          "spread_pct_of_median": 60.127696009348895,
+          "values": [
+            284.6206473186612,
+            225.0883737578988,
+            149.28019419312477,
+            271.7659417539835,
+            188.4882217273116
+          ]
+        },
+        "lite": {
+          "median": 51.9082210958004,
+          "min": 50.39395671337843,
+          "max": 74.43584129214287,
+          "spread_pct_of_median": 46.31614043254033,
+          "values": [
+            51.05493310838938,
+            55.56573253124952,
+            51.9082210958004,
+            74.43584129214287,
+            50.39395671337843
+          ]
+        }
+      },
+      "repetitions": {
+        "legacy": [
+          {
+            "oidc_requests": {
+              "discovery": 5,
+              "jwks": 5,
+              "total_oidc": 10
+            },
+            "wall_ms": 284.6206473186612,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 5,
+              "jwks": 5,
+              "total_oidc": 10
+            },
+            "wall_ms": 225.0883737578988,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 5,
+              "jwks": 5,
+              "total_oidc": 10
+            },
+            "wall_ms": 149.28019419312477,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 5,
+              "jwks": 5,
+              "total_oidc": 10
+            },
+            "wall_ms": 271.7659417539835,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 5,
+              "jwks": 5,
+              "total_oidc": 10
+            },
+            "wall_ms": 188.4882217273116,
+            "statuses": [
+              403
+            ]
+          }
+        ],
+        "lite": [
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 51.05493310838938,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 55.56573253124952,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 51.9082210958004,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 74.43584129214287,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 50.39395671337843,
+            "statuses": [
+              403
+            ]
+          }
+        ]
+      }
+    },
+    "scope_sets_10": {
+      "discovery": {
+        "legacy": {
+          "median": 10.0,
+          "min": 10.0,
+          "max": 10.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "lite": {
+          "median": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "jwks": {
+        "legacy": {
+          "median": 10.0,
+          "min": 10.0,
+          "max": 10.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            10.0
+          ]
+        },
+        "lite": {
+          "median": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "total_oidc": {
+        "legacy": {
+          "median": 20.0,
+          "min": 20.0,
+          "max": 20.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            20.0,
+            20.0,
+            20.0,
+            20.0,
+            20.0
+          ]
+        },
+        "lite": {
+          "median": 2.0,
+          "min": 2.0,
+          "max": 2.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            2.0,
+            2.0,
+            2.0,
+            2.0,
+            2.0
+          ]
+        }
+      },
+      "wall_ms": {
+        "legacy": {
+          "median": 375.09747594594955,
+          "min": 320.95073722302914,
+          "max": 398.8204784691334,
+          "spread_pct_of_median": 20.7598680982127,
+          "values": [
+            383.1740226596594,
+            375.09747594594955,
+            398.8204784691334,
+            324.673430994153,
+            320.95073722302914
+          ]
+        },
+        "lite": {
+          "median": 63.780528493225574,
+          "min": 60.142386704683304,
+          "max": 66.20962079614401,
+          "spread_pct_of_median": 9.512674533741334,
+          "values": [
+            65.17698522657156,
+            66.20962079614401,
+            63.780528493225574,
+            60.67916192114353,
+            60.142386704683304
+          ]
+        }
+      },
+      "repetitions": {
+        "legacy": [
+          {
+            "oidc_requests": {
+              "discovery": 10,
+              "jwks": 10,
+              "total_oidc": 20
+            },
+            "wall_ms": 383.1740226596594,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 10,
+              "jwks": 10,
+              "total_oidc": 20
+            },
+            "wall_ms": 375.09747594594955,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 10,
+              "jwks": 10,
+              "total_oidc": 20
+            },
+            "wall_ms": 398.8204784691334,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 10,
+              "jwks": 10,
+              "total_oidc": 20
+            },
+            "wall_ms": 324.673430994153,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 10,
+              "jwks": 10,
+              "total_oidc": 20
+            },
+            "wall_ms": 320.95073722302914,
+            "statuses": [
+              403
+            ]
+          }
+        ],
+        "lite": [
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 65.17698522657156,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 66.20962079614401,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 63.780528493225574,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 60.67916192114353,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 60.142386704683304,
+            "statuses": [
+              403
+            ]
+          }
+        ]
+      }
+    },
+    "scope_sets_20": {
+      "discovery": {
+        "legacy": {
+          "median": 20.0,
+          "min": 20.0,
+          "max": 20.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            20.0,
+            20.0,
+            20.0,
+            20.0,
+            20.0
+          ]
+        },
+        "lite": {
+          "median": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "jwks": {
+        "legacy": {
+          "median": 20.0,
+          "min": 20.0,
+          "max": 20.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            20.0,
+            20.0,
+            20.0,
+            20.0,
+            20.0
+          ]
+        },
+        "lite": {
+          "median": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "total_oidc": {
+        "legacy": {
+          "median": 40.0,
+          "min": 40.0,
+          "max": 40.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            40.0,
+            40.0,
+            40.0,
+            40.0,
+            40.0
+          ]
+        },
+        "lite": {
+          "median": 2.0,
+          "min": 2.0,
+          "max": 2.0,
+          "spread_pct_of_median": 0.0,
+          "values": [
+            2.0,
+            2.0,
+            2.0,
+            2.0,
+            2.0
+          ]
+        }
+      },
+      "wall_ms": {
+        "legacy": {
+          "median": 579.5918311923742,
+          "min": 551.011610776186,
+          "max": 634.7535373643041,
+          "spread_pct_of_median": 14.448431133999717,
+          "values": [
+            591.9904354959726,
+            579.5918311923742,
+            634.7535373643041,
+            551.011610776186,
+            561.4715181291103
+          ]
+        },
+        "lite": {
+          "median": 87.03236188739538,
+          "min": 84.48089007288218,
+          "max": 92.36500319093466,
+          "spread_pct_of_median": 9.058829321733382,
+          "values": [
+            87.03236188739538,
+            92.36500319093466,
+            84.48089007288218,
+            88.9095701277256,
+            84.49722919613123
+          ]
+        }
+      },
+      "repetitions": {
+        "legacy": [
+          {
+            "oidc_requests": {
+              "discovery": 20,
+              "jwks": 20,
+              "total_oidc": 40
+            },
+            "wall_ms": 591.9904354959726,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 20,
+              "jwks": 20,
+              "total_oidc": 40
+            },
+            "wall_ms": 579.5918311923742,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 20,
+              "jwks": 20,
+              "total_oidc": 40
+            },
+            "wall_ms": 634.7535373643041,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 20,
+              "jwks": 20,
+              "total_oidc": 40
+            },
+            "wall_ms": 551.011610776186,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 20,
+              "jwks": 20,
+              "total_oidc": 40
+            },
+            "wall_ms": 561.4715181291103,
+            "statuses": [
+              403
+            ]
+          }
+        ],
+        "lite": [
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 87.03236188739538,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 92.36500319093466,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 84.48089007288218,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 88.9095701277256,
+            "statuses": [
+              403
+            ]
+          },
+          {
+            "oidc_requests": {
+              "discovery": 1,
+              "jwks": 1,
+              "total_oidc": 2
+            },
+            "wall_ms": 84.49722919613123,
+            "statuses": [
+              403
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "verdicts": {
+    "n0_total_oidc": "within noise (repetition ranges overlap)",
+    "n1_total_oidc": "within noise (repetition ranges overlap)",
+    "n5_total_oidc": "armasec-lite 5.00x lower, ranges disjoint",
+    "n10_total_oidc": "armasec-lite 10.00x lower, ranges disjoint",
+    "n20_total_oidc": "armasec-lite 20.00x lower, ranges disjoint"
+  },
+  "provenance": {
+    "timestamp_utc": "2026-09-05T02:33:42+00:00",
+    "hostname": "raton-actions-00",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+    "cpu_count": 8,
+    "memory_total_bytes": 33284620288,
+    "kernel": "6.8.0-134-generic",
+    "operating_system": "Ubuntu 24.04.4 LTS",
+    "docker_version": "29.6.0",
+    "docker_api_version": "1.55",
+    "repetitions": 5,
+    "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+    "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+    "keycloak_repo_digests": [
+      "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+    ],
+    "library_versions": {
+      "legacy": "legacy 3.0.3",
+      "lite": "lite 0.1.0"
+    },
+    "app_container_limits": {
+      "identical": true,
+      "legacy": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-legacy",
+        "image_id": "sha256:3ea7b80a8680fecb665367a2561c17686c0ce4042caae04423f5a735bd5a453b"
+      },
+      "lite": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-lite",
+        "image_id": "sha256:43636120e7c93c5a7e600ea314bf69d328a2d116f91867ded1d943f49dc2e405"
+      }
+    },
+    "cgroup": {
+      "version": "v2",
+      "root_mounted_at": "/host/sys/fs/cgroup",
+      "memory_peak_resettable": false
+    },
+    "run_id": "2026-09-05T02-33-42Z",
+    "armasec_lite_version": "0.1.0",
+    "quick_mode": false
+  },
+  "elapsed_seconds": 87.2
+}
