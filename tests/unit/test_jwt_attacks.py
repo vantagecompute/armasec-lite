@@ -16,7 +16,9 @@ from cryptography.hazmat.primitives.asymmetric import padding
 
 from armasec_lite.exceptions import AuthenticationError
 from armasec_lite.jwt import (
+    MAX_TOKEN_BYTES,
     InvalidAlgorithmError,
+    InvalidKeyError,
     InvalidSignatureError,
     InvalidTokenError,
     b64url_decode,
@@ -246,3 +248,157 @@ def test_attack_ecdsa_zero_signature_is_rejected(ec_jwk, now):
     with pytest.raises(InvalidSignatureError) as info:
         decode(f"{head}.{body}.{b64url_encode(zero_sig)}", ec_jwk, ["ES256"])
     assert "length" not in str(info.value)
+
+
+def test_attack_weak_rsa_modulus_is_rejected(now):
+    """
+    A JWKS serving an undersized RSA key must not be usable, however well it signs.
+
+    RFC 7518 section 3.3 requires a modulus of at least 2048 bits for the RS and PS
+    families. `cryptography` refuses to GENERATE anything under 1024 bits but happily
+    reconstructs any size at all from public numbers, so a JWKS publishing a 512 bit
+    modulus was accepted and its signatures verified. A modulus that small factors on a
+    laptop, which hands the private half to whoever wants it.
+
+    This is the RSA counterpart of the curve pin in `_ec_public_key`: the algorithm, not
+    the key material, decides what strength the route agreed to accept.
+    """
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    weak = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+    numbers = weak.public_key().public_numbers()
+    weak_jwk = JWK.model_validate(
+        {
+            "kty": "RSA",
+            "kid": "rsa-test",
+            "n": b64url_encode(numbers.n.to_bytes(128, "big")),
+            "e": b64url_encode(numbers.e.to_bytes(3, "big")),
+        }
+    )
+    head = b64url_encode(json.dumps({"alg": "RS256", "kid": "rsa-test"}).encode())
+    body = b64url_encode(json.dumps({"sub": "admin", "exp": now + 600}).encode())
+    sig = weak.sign(f"{head}.{body}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+    token = f"{head}.{body}.{b64url_encode(sig)}"
+
+    with pytest.raises(InvalidKeyError, match="2048"):
+        decode(token, weak_jwk, ALGS)
+
+
+def test_attack_oversized_token_is_rejected(rsa_jwk):
+    """
+    A token past `MAX_TOKEN_BYTES` is refused before anything decodes it.
+
+    The cap exists because a JSON segment is parsed before it is measured. A header of
+    deeply nested arrays drives CPython's JSON scanner into recursion, and a 267KB token
+    consumed 8MB of stack before raising, which is a memory amplification of roughly
+    thirty to one from a single request.
+    """
+    oversized = "a" * (MAX_TOKEN_BYTES + 1) + ".b.c"
+    with pytest.raises(InvalidTokenError, match="too long"):
+        decode(oversized, rsa_jwk, ALGS)
+
+
+def test_attack_deeply_nested_header_cannot_exhaust_the_stack(rsa_jwk):
+    """
+    The nesting that used to reach a RecursionError no longer fits inside the size cap.
+
+    The header is parsed before the signature is checked, by necessity: `alg` has to be
+    read to know what to verify with. So header nesting is reachable by an entirely
+    unauthenticated caller, unlike payload nesting, which is only parsed after the
+    signature verifies.
+    """
+    deep = '{"alg":"RS256","x":' + "[" * 100_000 + "]" * 100_000 + "}"
+    token = f"{b64url_encode(deep.encode())}.{b64url_encode(b'{}')}.{b64url_encode(b'x')}"
+    assert len(token) > MAX_TOKEN_BYTES
+    with pytest.raises(InvalidTokenError, match="too long"):
+        decode(token, rsa_jwk, ALGS)
+
+
+def test_attack_jku_header_is_ignored(rsa_jwk, now, attacker_rsa_private):
+    """
+    A `jku` header naming an attacker's key set must not be fetched or honored.
+
+    The classic key-injection attack: point the verifier at a JWKS the attacker controls
+    and sign with the matching private key. `armasec_lite` never reads `jku`, so the token
+    is verified against the configured key set and fails on the signature. Defended by
+    construction rather than by a check, which is why it needs a test to stay true.
+    """
+    head = b64url_encode(
+        json.dumps(
+            {"alg": "RS256", "kid": "rsa-test", "jku": "https://attacker.example.com/jwks"}
+        ).encode()
+    )
+    body = b64url_encode(json.dumps({"sub": "admin", "exp": now + 600}).encode())
+    sig = attacker_rsa_private.sign(
+        f"{head}.{body}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256()
+    )
+    with pytest.raises(InvalidSignatureError):
+        decode(f"{head}.{body}.{b64url_encode(sig)}", rsa_jwk, ALGS)
+
+
+def test_attack_x5u_header_is_ignored(rsa_jwk, now, attacker_rsa_private):
+    """The `x5u` variant of the same key-injection attack, over an X.509 chain URL."""
+    head = b64url_encode(
+        json.dumps(
+            {"alg": "RS256", "kid": "rsa-test", "x5u": "https://attacker.example.com/chain.pem"}
+        ).encode()
+    )
+    body = b64url_encode(json.dumps({"sub": "admin", "exp": now + 600}).encode())
+    sig = attacker_rsa_private.sign(
+        f"{head}.{body}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256()
+    )
+    with pytest.raises(InvalidSignatureError):
+        decode(f"{head}.{body}.{b64url_encode(sig)}", rsa_jwk, ALGS)
+
+
+def test_attack_embedded_jwk_header_is_ignored(rsa_jwk, now, attacker_rsa_private):
+    """
+    A `jwk` header carrying the attacker's own public key must not be used to verify.
+
+    The self-contained form of key injection: no fetch required, the key travels in the
+    token. Refused for the same reason as `jku`, in that the header member is never read.
+    """
+    attacker_numbers = attacker_rsa_private.public_key().public_numbers()
+    head = b64url_encode(
+        json.dumps(
+            {
+                "alg": "RS256",
+                "kid": "rsa-test",
+                "jwk": {
+                    "kty": "RSA",
+                    "n": b64url_encode(attacker_numbers.n.to_bytes(256, "big")),
+                    "e": b64url_encode(attacker_numbers.e.to_bytes(3, "big")),
+                },
+            }
+        ).encode()
+    )
+    body = b64url_encode(json.dumps({"sub": "admin", "exp": now + 600}).encode())
+    sig = attacker_rsa_private.sign(
+        f"{head}.{body}".encode("ascii"), padding.PKCS1v15(), hashes.SHA256()
+    )
+    with pytest.raises(InvalidSignatureError):
+        decode(f"{head}.{body}.{b64url_encode(sig)}", rsa_jwk, ALGS)
+
+
+def test_attack_eddsa_curve_substitution_is_rejected(ed_jwk, ed_private):
+    """
+    An OKP key naming a curve other than Ed25519 is refused rather than guessed at.
+
+    `verify_signature` accepts exactly one EdDSA curve. A JWKS substituting Ed448, or any
+    other name, gets a refusal naming the algorithm rather than an attempt to read the key
+    material as something it is not.
+    """
+    substituted = ed_jwk.model_copy(update={"crv": "Ed448"})
+    token = encode({"sub": "abc"}, _ed_pem(ed_private), "EdDSA", {"kid": "ed-test"})
+    with pytest.raises(InvalidAlgorithmError, match="Ed448"):
+        decode(token, substituted, ["EdDSA"])
+
+
+def _ed_pem(ed_private):
+    from cryptography.hazmat.primitives import serialization
+
+    return ed_private.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )

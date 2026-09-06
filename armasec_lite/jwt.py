@@ -45,6 +45,31 @@ moving work between them, reintroduces the attack the arrangement defends agains
 at all. It is not itself an allowlist for a route: `decode` takes the permitted
 algorithms from its caller, and `DomainConfig.algorithm` narrows a route to exactly one.
 
+`MAX_TOKEN_BYTES` (64 KiB) caps a token before any segment is decoded. A JSON segment has
+to be parsed before it can be measured, and the header in particular is parsed before the
+signature is checked, because `alg` decides what to verify with. So an unauthenticated
+caller controls a JSON document this module will parse. Deep array nesting drives
+CPython's JSON scanner into recursion: a 267KB token consumed 8MB of stack before raising
+`RecursionError`, an amplification of roughly thirty to one. The cap is an order of
+magnitude above any real token, and in an HTTP deployment the server's own header limit is
+usually the binding constraint anyway, but this module does not get to assume it was
+reached over HTTP.
+
+`KEY_CACHE_SIZE` (128) bounds how many reconstructed public keys are kept. Building an RSA
+key from its numbers is an OpenSSL construction that cost about a tenth of a warm decode,
+and a JWKS changes only on a rotation, so the keys are cached on the base64url members
+themselves. Keying on the material rather than on `kid` is the safety property: two JWKs
+with the same members are the same key, and two with different members can never reach
+each other's entry.
+
+`MIN_RSA_KEY_BITS` (2048) is the smallest RSA modulus `_rsa_public_key` will build a key
+from. RFC 7518 section 3.3 requires it for the RS and PS families. It is not redundant
+with `cryptography`, which refuses to GENERATE a key under 1024 bits but reconstructs any
+size at all from public numbers, so a JWKS publishing a 512 bit modulus was accepted and
+its signatures verified. That is the same threat the ECDSA curve pin addresses, from the
+other direction: strength is decided by what the route agreed to accept, never by what the
+key material asks for.
+
 ### Two switches worth knowing about
 
 `_DEFAULT_OPTIONS` exposes `verify_signature`, a switch that turns the signature check
@@ -75,10 +100,11 @@ import json
 import math
 import re
 import time
+from functools import lru_cache
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
@@ -223,6 +249,10 @@ def split_token(token: str) -> tuple[str, str, str]:
     The segments are returned still base64url encoded and entirely unverified. Nothing
     here inspects their contents.
 
+    The length cap is applied here rather than in `decode`, so that every entry point gets
+    it: `get_unverified_header` reaches this function too, and it is called on the request
+    path before anything has been verified.
+
     Args:
         token: The compact serialization to split.
 
@@ -230,11 +260,18 @@ def split_token(token: str) -> tuple[str, str, str]:
         The header, payload and signature segments, in that order.
 
     Raises:
-        InvalidTokenError: The value is not a string, does not have exactly three
-            segments, or has an empty segment. Maps to 401.
+        InvalidTokenError: The value is not a string, is longer than `MAX_TOKEN_BYTES`,
+            does not have exactly three segments, or has an empty segment. Maps to 401.
     """
     if not isinstance(token, str):
         raise InvalidTokenError("Token is not a string")
+
+    # Checked before any segment is decoded or parsed. A JSON segment cannot be measured
+    # until it has been parsed, and parsing is where the recursion this bounds happens.
+    if len(token) > MAX_TOKEN_BYTES:
+        raise InvalidTokenError(
+            f"Token is too long: {len(token)} characters, limit is {MAX_TOKEN_BYTES}"
+        )
 
     parts = token.split(".")
     if len(parts) != 3:
@@ -331,6 +368,21 @@ _REQUIRED_KTY: dict[str, str] = {
     "Ed": "OKP",
 }
 
+#: Cap on a whole compact serialization, before any segment is decoded. Bounds the JSON
+#: parser's recursion depth, which is reachable by an unauthenticated caller through the
+#: header. See the module docstring.
+MAX_TOKEN_BYTES = 64 * 1024
+
+#: How many reconstructed public keys are held. A JWKS carries a handful of keys and gains
+#: a few more per rotation, so this is far above what any provider needs.
+KEY_CACHE_SIZE = 128
+
+#: Smallest RSA modulus a key will be built from, in bits. RFC 7518 section 3.3 requires
+#: 2048 for RS and PS. `cryptography` will not generate below 1024 but reconstructs any
+#: size from public numbers, so this is the only thing standing between a hostile JWKS and
+#: a modulus that factors on a laptop.
+MIN_RSA_KEY_BITS = 2048
+
 SUPPORTED_ALGORITHMS: frozenset[str] = frozenset(
     [f"{family}{size}" for family in ("RS", "PS", "ES", "HS") for size in ("256", "384", "512")]
     + ["EdDSA"]
@@ -402,7 +454,14 @@ def _check_kty(algorithm: str, jwk: JWK) -> None:
 
 def _rsa_public_key(jwk: JWK) -> rsa.RSAPublicKey:
     """
-    Build an RSA public key from a JWK's `n` and `e`.
+    Build an RSA public key from a JWK's `n` and `e`, refusing an undersized modulus.
+
+    The size check is the RSA counterpart of the curve pin in `_ec_public_key`. RFC 7518
+    section 3.3 requires at least 2048 bits for RS and PS, and `cryptography` does not
+    enforce it on this path: it refuses to generate a key below 1024 bits but reconstructs
+    any size at all from public numbers. Without this, a JWKS publishing a 512 bit modulus
+    would be accepted and its signatures would verify, and a modulus that small hands the
+    private half to anyone who wants to spend an afternoon on it.
 
     Args:
         jwk: The key to read, already checked to have `kty` of "RSA".
@@ -411,11 +470,50 @@ def _rsa_public_key(jwk: JWK) -> rsa.RSAPublicKey:
         The reconstructed public key.
 
     Raises:
-        InvalidKeyError: `n` or `e` is absent or empty.
+        InvalidKeyError: `n` or `e` is absent or empty, or the modulus is smaller than
+            `MIN_RSA_KEY_BITS`. Maps to 401, though an undersized modulus points at the
+            provider's JWKS rather than at the token.
         InvalidTokenError: `n` or `e` is not valid base64url.
         ValueError: `cryptography` rejected the numbers as an RSA key.
     """
-    return rsa.RSAPublicNumbers(e=_b64url_int(jwk, "e"), n=_b64url_int(jwk, "n")).public_key()
+    return _build_rsa_public_key(_required_member(jwk, "n"), _required_member(jwk, "e"))
+
+
+@lru_cache(maxsize=KEY_CACHE_SIZE)
+def _build_rsa_public_key(n: str, e: str) -> rsa.RSAPublicKey:
+    """
+    Build and cache an RSA public key from its encoded members.
+
+    Cached on the members themselves, which is what makes the cache safe: two JWKs holding
+    the same `n` and `e` are the same key, and two holding different material can never
+    reach each other's entry. Keying on anything looser, such as `kid`, would let one key
+    be verified against another's material, which is an authentication bypass rather than a
+    performance bug.
+
+    Args:
+        n: The modulus, base64url encoded.
+        e: The exponent, base64url encoded.
+
+    Returns:
+        The reconstructed public key, shared with every earlier caller that passed the same
+        members.
+
+    Raises:
+        InvalidKeyError: The modulus is smaller than `MIN_RSA_KEY_BITS`. Not cached, since
+            `lru_cache` stores return values and not exceptions, so a rejected key is
+            rebuilt and rejected again on the next attempt.
+        InvalidTokenError: A member is not valid base64url.
+        ValueError: `cryptography` rejected the numbers as an RSA key.
+    """
+    key = rsa.RSAPublicNumbers(
+        e=int.from_bytes(b64url_decode(e), "big"),
+        n=int.from_bytes(b64url_decode(n), "big"),
+    ).public_key()
+    if key.key_size < MIN_RSA_KEY_BITS:
+        raise InvalidKeyError(
+            f"RSA key is {key.key_size} bits, but at least {MIN_RSA_KEY_BITS} are required"
+        )
+    return key
 
 
 def _ec_public_key(algorithm: str, jwk: JWK) -> ec.EllipticCurvePublicKey:
@@ -440,12 +538,34 @@ def _ec_public_key(algorithm: str, jwk: JWK) -> ec.EllipticCurvePublicKey:
         ValueError: The coordinates are not a point on the algorithm's curve, which is
             what a substituted key looks like from here.
     """
+    return _build_ec_public_key(algorithm, _required_member(jwk, "x"), _required_member(jwk, "y"))
+
+
+@lru_cache(maxsize=KEY_CACHE_SIZE)
+def _build_ec_public_key(algorithm: str, x: str, y: str) -> ec.EllipticCurvePublicKey:
+    """
+    Build and cache an EC public key from its algorithm and encoded coordinates.
+
+    The algorithm is part of the cache key, not merely an argument, because it is what
+    chooses the curve. Leaving it out would let an ES256 key and an ES384 request share an
+    entry, which would defeat the pin the caller's docstring describes.
+
+    Args:
+        algorithm: The ES algorithm in use, already allowlisted.
+        x:         The x coordinate, base64url encoded.
+        y:         The y coordinate, base64url encoded.
+
+    Returns:
+        The reconstructed public key, on the curve the algorithm names.
+
+    Raises:
+        InvalidTokenError: A coordinate is not valid base64url.
+        ValueError: The coordinates are not a point on the algorithm's curve.
+    """
     curve_cls, _ = _EC_CURVES[algorithm]
-    x_raw = b64url_decode(_required_member(jwk, "x"))
-    y_raw = b64url_decode(_required_member(jwk, "y"))
     return ec.EllipticCurvePublicNumbers(
-        x=int.from_bytes(x_raw, "big"),
-        y=int.from_bytes(y_raw, "big"),
+        x=int.from_bytes(b64url_decode(x), "big"),
+        y=int.from_bytes(b64url_decode(y), "big"),
         curve=curve_cls(),
     ).public_key()
 
@@ -761,6 +881,12 @@ def _sign(algorithm: str, key: bytes | str, signing_input: bytes) -> bytes:
         secret = key.encode() if isinstance(key, str) else key
         digest = getattr(hashlib, f"sha{algorithm[2:]}")
         return hmac.new(secret, signing_input, digest).digest()
+
+    # Imported here rather than at module scope. This is the only place the library needs
+    # it, `_sign` is a testing aid never reached by a request, and importing it eagerly
+    # cost roughly 6.8ms of package import time while dragging in
+    # `serialization.ssh` and its optional bcrypt path.
+    from cryptography.hazmat.primitives import serialization
 
     pem = key.encode() if isinstance(key, str) else key
     private = serialization.load_pem_private_key(pem, password=None)

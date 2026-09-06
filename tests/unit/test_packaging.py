@@ -84,3 +84,29 @@ def test_importing_armasec_lite_does_not_load_banned_modules():
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert result.stdout.strip() == "[]", f"armasec_lite loaded: {result.stdout.strip()}"
+
+
+def test_importing_armasec_lite_does_not_load_pem_serialization():
+    """
+    The production import path must not pull in `cryptography`'s serialization machinery.
+
+    `jwt.py` needs `serialization.load_pem_private_key` at exactly one place: `_sign`,
+    which backs `encode`, which is a testing aid never reached by a request. Importing it
+    at module scope cost roughly 6.8ms of the package's import time and dragged in
+    `serialization.ssh`, which in turn reaches for `bcrypt` when it is installed. None of
+    that belongs in a validator's startup path, so the import lives inside `_sign`.
+
+    Runs in a subprocess: this test process has already imported serialization through
+    conftest's key fixtures.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, armasec_lite; "
+        "print('cryptography.hazmat.primitives.serialization' in sys.modules)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "False"
