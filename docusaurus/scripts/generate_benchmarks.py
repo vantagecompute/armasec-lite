@@ -619,10 +619,15 @@ def caption(run: dict[str, Any], stem: str | None = None) -> str:
         if stem in SINGLE_OBSERVATION
         else f"{block.get('repetitions', '?')} repetitions"
     )
+    # The commit, where the run recorded one. The version in `library_versions` cannot
+    # identify the code on its own: it does not move between releases, so a figure captioned
+    # with the version alone can be one of several different builds.
+    identity = layout.code_identity(block)
+    code = f" at {identity}" if identity else ""
     return (
         f"Run {run['run_id']} on host {block.get('hostname', 'unknown')}, {when}. "
         f"{versions.get('legacy', 'upstream armasec')} against "
-        f"{versions.get('lite', 'armasec-lite')}, {sample}."
+        f"{versions.get('lite', 'armasec-lite')}{code}, {sample}."
     )
 
 
@@ -828,6 +833,46 @@ invariant in the paragraph above is the part that survives a change of provider.
 # --------------------------------------------------------------------------------------
 
 
+def arm_quantity(
+    document: dict[str, Any], path: tuple[str, ...], arm: str, source: str
+) -> float | None:
+    """
+    Read one arm's own value for a tracked quantity out of a result file.
+
+    The raw per-arm number, not the ratio between the arms. Both are wanted, for different
+    questions. The ratio is what the page publishes about armasec-lite against upstream. The
+    raw number is what answers whether a change we made moved anything, because a ratio can
+    shift on the upstream arm's noise alone and say nothing about our own code.
+
+    Args:
+        document: A parsed result file.
+        path:     The path to the measurement, with `{arm}` standing in for the arm name.
+        arm:      The arm to read, `legacy` or `lite`.
+        source:   The file, for error messages.
+
+    Returns:
+        The value, taking the median where the measurement is a distribution, or None when
+        this file does not hold the measurement at all.
+
+    Raises:
+        GenerationError: The path resolves to something that is not a number, which means
+            the harness and this list have drifted apart.
+    """
+    cursor: Any = document
+    for part in path:
+        key = arm if part == "{arm}" else part
+        if not isinstance(cursor, dict) or key not in cursor:
+            return None
+        cursor = cursor[key]
+    if isinstance(cursor, dict):
+        if "median" not in cursor:
+            return None
+        return float(cursor["median"])
+    if isinstance(cursor, bool) or not isinstance(cursor, (int, float)):
+        raise GenerationError(f"{source}: {'/'.join(path)} is not a number")
+    return float(cursor)
+
+
 def tracked_quantity(
     document: dict[str, Any], path: tuple[str, ...], source: str
 ) -> tuple[float, bool] | None:
@@ -851,23 +896,164 @@ def tracked_quantity(
     """
     values: dict[str, float] = {}
     for arm in ARMS:
-        cursor: Any = document
-        for part in path:
-            key = arm if part == "{arm}" else part
-            if not isinstance(cursor, dict) or key not in cursor:
-                return None
-            cursor = cursor[key]
-        if isinstance(cursor, dict):
-            if "median" not in cursor:
-                return None
-            values[arm] = float(cursor["median"])
-        elif isinstance(cursor, bool) or not isinstance(cursor, (int, float)):
-            raise GenerationError(f"{source}: {'/'.join(path)} is not a number")
-        else:
-            values[arm] = float(cursor)
+        found = arm_quantity(document, path, arm, source)
+        if found is None:
+            return None
+        values[arm] = found
     if values["lite"] == 0.0:
         return values["legacy"], False
     return values["legacy"] / values["lite"], True
+
+
+def chronological(index: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Every committed run, oldest first.
+
+    The index groups runs under versions and orders them newest first inside each. Neither
+    is the order a reader compares runs in, and the version grouping actively gets in the
+    way: the run before a given one is often the last run of the previous version, which is
+    the comparison that matters most.
+
+    Args:
+        index: The loaded index, with every run's documents attached.
+
+    Returns:
+        The flattened runs, sorted by the timestamp each recorded for itself.
+    """
+    runs = [run for version in index["versions"] for run in version["runs"]]
+    runs.sort(key=lambda run: str(provenance_of(run).get("timestamp_utc", "")))
+    return runs
+
+
+def previous_run_of(index: dict[str, Any], run: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Find the run taken immediately before this one, across every version.
+
+    Args:
+        index: The loaded index.
+        run:   The run to look back from.
+
+    Returns:
+        The preceding run, or None when this is the oldest committed run.
+    """
+    ordered = chronological(index)
+    for position, candidate in enumerate(ordered):
+        if candidate["page_id"] == run["page_id"]:
+            return ordered[position - 1] if position else None
+    return None
+
+
+def code_identity_of(run: dict[str, Any]) -> str | None:
+    """
+    Name the exact code a run measured, when the run recorded it.
+
+    Args:
+        run: A loaded run.
+
+    Returns:
+        The git describe string, or None for a run taken before the harness recorded one.
+    """
+    return layout.code_identity(provenance_of(run))
+
+
+def same_code(first: dict[str, Any], second: dict[str, Any]) -> bool | None:
+    """
+    Decide whether two runs measured the same code.
+
+    This is the question that decides how a difference between two runs should be read. Two
+    runs of the same commit differ by machine and by noise, which is how far a single number
+    is worth trusting. Two runs of different commits differ by what we changed. The version
+    cannot answer it, which is why the harness records a git block.
+
+    Args:
+        first:  One run.
+        second: The other.
+
+    Returns:
+        True or False, or None when either run recorded no git block and the question
+        cannot be answered rather than guessed at.
+    """
+    left, right = code_identity_of(first), code_identity_of(second)
+    if left is None or right is None:
+        return None
+    return left == right
+
+
+def comparison_rows(
+    run: dict[str, Any], earlier: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """
+    Set every tracked quantity in one run against the same quantity in an earlier one.
+
+    Each row carries both comparisons the page needs to make. Against upstream armasec, as
+    a ratio, which is the claim the project publishes. Against the earlier run, as the
+    percentage armasec-lite's own number moved, which is the only one that says whether a
+    change we made did anything. Keeping them in one row is the point of this function: a
+    ratio that improved because upstream got slower is not an improvement in our code, and
+    the two columns side by side make that visible instead of arguable.
+
+    Args:
+        run:     The run the page is about.
+        earlier: The run to compare it against.
+
+    Returns:
+        The rows, and the labels of quantities one of the two runs did not measure.
+    """
+    rows: list[dict[str, Any]] = []
+    uncompared: list[str] = []
+    for label, kind, stem, path in REPRODUCIBILITY:
+        now = run["documents"].get(stem)
+        before = earlier["documents"].get(stem)
+        if now is None or before is None:
+            uncompared.append(label)
+            continue
+        lite_now = arm_quantity(now, path, "lite", f"{run['label']}/{stem}.json")
+        lite_before = arm_quantity(before, path, "lite", f"{earlier['label']}/{stem}.json")
+        legacy_now = arm_quantity(now, path, "legacy", f"{run['label']}/{stem}.json")
+        if lite_now is None or lite_before is None or legacy_now is None:
+            uncompared.append(label)
+            continue
+        if lite_before == 0.0:
+            change: float | None = None
+        else:
+            change = (lite_now - lite_before) / abs(lite_before) * 100.0
+        rows.append(
+            {
+                "label": label,
+                "kind": kind,
+                "lite_now": lite_now,
+                "lite_before": lite_before,
+                "legacy_now": legacy_now,
+                "ratio_now": (legacy_now / lite_now) if lite_now else None,
+                "change_pct": change,
+                "moved": change is not None and abs(change) > REPRODUCTION_MOVEMENT_PCT,
+            }
+        )
+    return rows, uncompared
+
+
+def change_cell(row: dict[str, Any]) -> str:
+    """
+    Render how far a quantity moved between two runs, and say which way is better.
+
+    Direction is not the same as improvement, and the two classes of quantity disagree about
+    it. Less CPU, fewer calls and lower latency are all improvements, so for every quantity
+    tracked here a fall is a gain. The cell says so in words rather than leaving a signed
+    number for the reader to interpret against a column heading.
+
+    Args:
+        row: One comparison row.
+
+    Returns:
+        The formatted cell.
+    """
+    change = row["change_pct"]
+    if change is None:
+        return "not comparable, the earlier run measured zero"
+    if abs(change) <= REPRODUCTION_MOVEMENT_PCT:
+        return f"{change:+.1f}%, within noise"
+    direction = "better" if change < 0 else "worse"
+    return f"**{change:+.1f}%, {direction}**"
 
 
 def render_quantity(value: float, is_ratio: bool) -> str:
@@ -2178,6 +2364,8 @@ def provenance_table(run: dict[str, Any]) -> str:
     """
     block = provenance_of(run)
     limits = block.get("app_container_limits", {}).get("legacy", {})
+    git = layout.git_state(block)
+    identity = code_identity_of(run)
     rows = [
         [
             "measured at",
@@ -2207,6 +2395,30 @@ def provenance_table(run: dict[str, Any]) -> str:
             "armasec-lite arm",
             f"`{escape(str(block.get('library_versions', {}).get('lite', 'unknown')))}`",
         ],
+        # The version above cannot identify the code: it comes from pyproject.toml and does
+        # not move between releases, so two runs of two different commits report the same
+        # one. These rows are what tell them apart, and runs taken before the harness
+        # recorded them say so rather than showing a blank.
+        [
+            "armasec-lite commit",
+            f"`{escape(str(identity))}`" if identity else "not recorded by this run",
+        ],
+        [
+            "branch",
+            f"`{escape(str(git.get('branch')))}`"
+            if git and git.get("branch")
+            else "not recorded by this run",
+        ],
+        [
+            "working tree",
+            (
+                "**dirty, so the commit above does not fully describe what ran**"
+                if git.get("dirty")
+                else "clean"
+            )
+            if git
+            else "not recorded by this run",
+        ],
         ["repetitions per point", count(float(block.get("repetitions", 0)))],
     ]
     if limits:
@@ -2222,7 +2434,145 @@ def provenance_table(run: dict[str, Any]) -> str:
 HEADER_IMPORT = 'import PlotlyChart from "@site/src/components/PlotlyChart";\n'
 
 
-def write_run_page(run: dict[str, Any], position: int) -> str:
+def against_previous_section(run: dict[str, Any], earlier: dict[str, Any] | None) -> str:
+    """
+    Write the section setting this run against the one taken before it.
+
+    A run page used to answer one question, how armasec-lite compares to upstream armasec in
+    this run. That leaves the more useful question to the reader's memory: whether this run
+    differs from the last one, and if so whether because the code changed or because the
+    machine did. This section answers it in the same table, one column each, so the two
+    cannot be confused for one another.
+
+    The first line the section writes is whether the two runs measured the same code, taken
+    from the git block rather than from the version, because the version does not move
+    between releases and would call two different commits the same thing. When either run
+    predates that block the section says the question cannot be answered, which is the
+    honest report for the four runs already committed.
+
+    Args:
+        run:     The run the page is about.
+        earlier: The run before it, or None when this is the oldest.
+
+    Returns:
+        Markdown for the section, or for its absence.
+    """
+    if earlier is None:
+        return (
+            "## Against the previous run\n\n"
+            "**This is the oldest committed run, so there is nothing to set it against.** "
+            "Every later run carries this section, comparing it to the run before it.\n"
+        )
+
+    rows, uncompared = comparison_rows(run, earlier)
+    when = str(provenance_of(earlier).get("timestamp_utc", "")).replace("+00:00", " UTC")
+    host = str(provenance_of(earlier).get("hostname", "an unknown host"))
+    this_host = str(provenance_of(run).get("hostname", "an unknown host"))
+
+    identical = same_code(run, earlier)
+    mine, theirs = code_identity_of(run), code_identity_of(earlier)
+    if identical is None:
+        reading = (
+            "**One of these two runs predates the harness recording which commit it "
+            "measured, so what a difference below means cannot be settled here.** It could "
+            "be a code change or it could be noise. Runs taken from now on carry the commit "
+            "and this line will say which."
+        )
+    elif identical:
+        reading = (
+            f"**Both runs measured the same code, `{escape(str(mine))}`.** Anything that "
+            "moved below moved because of the machine or because of noise, not because of a "
+            "change in the library. That makes this table a measurement of how far a single "
+            "number on this page is worth trusting."
+        )
+    else:
+        reading = (
+            f"**These runs measured different code:** `{escape(str(theirs))}` then "
+            f"`{escape(str(mine))}`. A movement below larger than the noise this harness "
+            "carries is what that change did."
+        )
+
+    machine = (
+        ""
+        if host == this_host
+        else (
+            f"\n\n:::warning[Different machines]\n\nThe earlier run was taken on "
+            f"`{escape(host)}` and this one on `{escape(this_host)}`. Every number here is a "
+            "property of the machine as much as of the libraries, so a difference below may "
+            "be the hardware and nothing else.\n\n:::"
+        )
+    )
+
+    parts = [
+        "## Against the previous run",
+        "",
+        (
+            f"The run before this one is [`{earlier['run_id']}`](./{earlier['page_id']}.mdx), "
+            f"taken on `{escape(host)}` at {escape(when)}."
+        ),
+        "",
+        reading + machine,
+        "",
+        (
+            "Two comparisons, one row each. **Against upstream** is the ratio this run "
+            "measured, which is the claim this project publishes. **Against the previous "
+            "run** is how far armasec-lite's own number moved, which is the only one of the "
+            "two that says anything about a change we made: a ratio can improve because the "
+            "upstream arm got slower, and that is not our doing. A movement inside "
+            f"{REPRODUCTION_MOVEMENT_PCT:g} percent is reported as noise rather than as a "
+            "result, on the same threshold the summary page uses.\n"
+        ),
+    ]
+
+    if not rows:
+        parts.append(
+            "**The two runs share no tracked measurement, so there is no row to draw.** "
+            "That happens when one of them recorded a different set of scenarios.\n"
+        )
+        return "\n".join(parts)
+
+    for kind, heading in ((WORK, "Work done and resources used"), (LATENCY, "Latency")):
+        group = [row for row in rows if row["kind"] == kind]
+        if not group:
+            continue
+        parts.append(f"### {heading}")
+        parts.append("")
+        parts.append(
+            table(
+                [
+                    "Measurement",
+                    "armasec-lite, this run",
+                    "armasec-lite, previous run",
+                    "Against the previous run",
+                    "Against upstream, this run",
+                ],
+                [
+                    [
+                        escape(row["label"]),
+                        count(row["lite_now"]),
+                        count(row["lite_before"]),
+                        change_cell(row),
+                        (
+                            f"{row['ratio_now']:,.3f}x"
+                            if row["ratio_now"] is not None
+                            else "not a ratio, armasec-lite measured zero"
+                        ),
+                    ]
+                    for row in group
+                ],
+            )
+        )
+
+    if uncompared:
+        parts.append(
+            "One of the two runs did not measure "
+            + ", ".join(escape(label) for label in uncompared)
+            + ", so those are absent above rather than shown as unchanged.\n"
+        )
+    return "\n".join(parts)
+
+
+def write_run_page(run: dict[str, Any], position: int, index: dict[str, Any]) -> str:
     """
     Write one run's own page: what it measured, on what machine, and with what result.
 
@@ -2239,6 +2589,7 @@ def write_run_page(run: dict[str, Any], position: int) -> str:
     Args:
         run:      A loaded run.
         position: Its sidebar position.
+        index:    The whole index, so the page can find the run taken before this one.
 
     Returns:
         The page body, for the caller to write out.
@@ -2301,6 +2652,8 @@ def write_run_page(run: dict[str, Any], position: int) -> str:
             ],
         )
     )
+
+    parts.append(against_previous_section(run, previous_run_of(index, run)))
 
     for stem in RUN_PAGE_ORDER:
         if stem not in run["documents"]:
@@ -2849,7 +3202,9 @@ def generate(check_only: bool = False) -> int:
 
     pages = {os.path.join(PAGES_DIR, "index.mdx"): write_index_page(index, trends)}
     for position, run in enumerate(reversed(all_runs), start=1):
-        pages[os.path.join(PAGES_DIR, f"{run['page_id']}.mdx")] = write_run_page(run, position)
+        pages[os.path.join(PAGES_DIR, f"{run['page_id']}.mdx")] = write_run_page(
+            run, position, index
+        )
 
     for body in pages.values():
         # Written as escapes so this guard does not itself contain what it forbids.
