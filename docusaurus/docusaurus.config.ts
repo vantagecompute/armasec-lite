@@ -1,6 +1,6 @@
 import type {Config} from '@docusaurus/types';
 import {themes as prismThemes} from 'prism-react-renderer';
-import {staticDir, getProjectVersion} from '@vantagecompute/docusaurus-theme';
+import {staticDir, getProjectVersion, navbarLogo, footerLogo} from '@vantagecompute/docusaurus-theme';
 import * as path from 'path';
 
 // From the theme rather than hand-rolled here, so every Vantage site advertises its
@@ -124,17 +124,7 @@ const config: Config = {
       // carries it. A navbar title that grows a git-describe suffix between releases
       // reflows the header on every commit.
       title: 'armasec-lite',
-      // Served from static/img rather than the S3 branding bucket: the SVG is a few KB,
-      // renders crisply at any zoom, and does not make the header wait on a third-party
-      // request. No `srcDark`: the theme pins the navbar background to #18123B in both
-      // colour modes, so the wordmark's white glyphs read the same either way, and a
-      // second asset would only be a second thing to keep in sync.
-      logo: {
-        alt: 'Vantage Compute',
-        src: 'img/vantage-logo-color.svg',
-        href: 'https://docs.vantagecompute.ai',
-        target: '_self',
-      },
+      logo: navbarLogo,
       items: [
         {type: 'docSidebar', sidebarId: 'docsSidebar', position: 'left', label: 'Docs'},
         {to: '/api-reference/', label: 'API Reference', position: 'left'},
@@ -148,11 +138,7 @@ const config: Config = {
     },
     footer: {
       style: 'dark',
-      logo: {
-        alt: 'Vantage Compute Logo',
-        src: 'https://vantage-compute-public-assets.s3.us-east-1.amazonaws.com/branding/vantage-logo-text-white-horz.png',
-        href: 'https://vantagecompute.ai',
-      },
+      logo: footerLogo,
       links: [
         {
           title: 'Documentation',
