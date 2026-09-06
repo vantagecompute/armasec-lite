@@ -28,8 +28,18 @@ log, instead of indistinguishable from a truncated or corrupted token.
 
 ### 1. Structural validation
 
-Split the token on `.`; require exactly three segments. Base64url-decode each with
-computed padding, rejecting lengths that cannot be valid base64url (`len % 4 == 1`).
+Refuse a token longer than `MAX_TOKEN_BYTES` (64 KiB). Then split it on `.`; require
+exactly three segments. Base64url-decode each with computed padding, rejecting lengths
+that cannot be valid base64url (`len % 4 == 1`).
+
+The size cap comes first because a JSON segment cannot be measured until it has been
+parsed, and parsing is where the cost is. Step 2 has to read `alg` to know what to verify
+with, so the header is parsed before the signature is checked, by necessity, which puts a
+JSON document under the control of an entirely unauthenticated caller. Unbounded array
+nesting drives CPython's JSON scanner into recursion: a 267 KB token consumed 8 MB of
+stack before raising. The cap is an order of magnitude above any real token, and in an
+HTTP deployment the server's own header limit usually binds first, but `decode` is a
+public function and does not get to assume it was reached over HTTP.
 
 JSON parsing of a decoded segment additionally refuses `Infinity`, `-Infinity` and `NaN`,
 which Python's `json` module accepts by default and which are not valid JSON.
@@ -92,15 +102,40 @@ already passed a real cryptographic check.
 
 ## Algorithm support
 
-| Algorithm | JWK fields | Verification |
+| Algorithm | JWK fields read | Verification |
 | --- | --- | --- |
 | RS256 / RS384 / RS512 | `n`, `e` | `RSAPublicNumbers(e, n).public_key()`, PKCS1v15 padding |
 | PS256 / PS384 / PS512 | `n`, `e` | same key, PSS with MGF1, salt length equal to digest length |
-| ES256 / ES384 / ES512 | `crv`, `x`, `y` | `EllipticCurvePublicNumbers`, P-256 / P-384 / P-521 |
-| EdDSA | `crv=Ed25519`, `x` | `Ed25519PublicKey.from_public_bytes` |
+| ES256 / ES384 / ES512 | `x`, `y` | `EllipticCurvePublicNumbers`, P-256 / P-384 / P-521 |
+| EdDSA | `crv`, `x` | `Ed25519PublicKey.from_public_bytes`, `crv` required to be `Ed25519` |
 | HS256 / HS384 / HS512 | `k` | `hmac.new(...).digest()` compared with `hmac.compare_digest` |
 
 Big-endian integers come from `int.from_bytes(base64url_decode(field), "big")`.
+
+The `crv` column is worth reading closely. For **ES** the field is not read at all: the
+curve and the coordinate width come from the algorithm name, so a hostile JWKS cannot
+substitute a weaker curve than the route agreed to accept. For **EdDSA** it is read and
+checked, because there the algorithm name does not name a curve, and only `Ed25519` is
+accepted.
+
+### Key strength
+
+An RSA modulus below `MIN_RSA_KEY_BITS` (2048) is refused, per RFC 7518 section 3.3. This
+is not redundant with `cryptography`, which refuses to *generate* a key below 1024 bits
+but reconstructs any size at all from public numbers. Without the check, a JWKS publishing
+a 512 bit modulus was accepted and its signatures verified, and a modulus that small hands
+the private half to anyone willing to spend an afternoon on it. It is the RSA half of the
+same rule the ECDSA curve pin enforces.
+
+### Key caching
+
+Reconstructing a public key from its JWK members is an OpenSSL construction, and it used to
+run on every request. The built keys are cached, keyed on the base64url members themselves
+(and, for EC, on the algorithm, since that is what chooses the curve). Keying on the
+material is the safety property: two JWKs holding the same members are the same key, and
+two holding different members can never reach each other's entry. Keying on anything
+looser, `kid` for instance, would let one key be verified against another's material,
+which would be an authentication bypass rather than a performance bug.
 
 ## ECDSA signature encoding
 

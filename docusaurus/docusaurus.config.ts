@@ -3,9 +3,10 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import {staticDir, getProjectVersion} from '@vantagecompute/docusaurus-theme';
 import * as path from 'path';
 
-// From the theme rather than hand-rolled here: it reads the uv workspace root's version,
-// which is what the site should advertise, and every other Vantage site reads it the same
-// way.
+// From the theme rather than hand-rolled here, so every Vantage site advertises its
+// version the same way. It returns `git describe --tags --always`, so the string ALREADY
+// carries its own leading `v` ("v0.1.3", or "v0.1.3-2-gb4f14ee" between tags). Do not add
+// another one: doing so rendered "armasec-lite vv0.1.3" in the navbar of the built site.
 const projectVersion = getProjectVersion();
 
 // The generator parses the source with `ast` and never imports it, so it needs an
@@ -17,7 +18,7 @@ const pydocPython = process.env.PYDOC_PYTHON ?? 'python3';
 
 const config: Config = {
   title: 'armasec-lite',
-  tagline: `Injectable FastAPI auth via OIDC, with two dependencies (v${projectVersion})`,
+  tagline: `Injectable FastAPI auth via OIDC, with three dependencies (${projectVersion})`,
   favicon: 'img/favicon.ico',
 
   // A spoke site under the docs hub, not GitHub Pages. Authentication happens at the
@@ -119,7 +120,10 @@ const config: Config = {
 
   themeConfig: {
     navbar: {
-      title: `armasec-lite v${projectVersion}`,
+      // The version belongs in the tagline, which is where every other Vantage site
+      // carries it. A navbar title that grows a git-describe suffix between releases
+      // reflows the header on every commit.
+      title: 'armasec-lite',
       logo: {
         alt: 'Vantage Compute Logo',
         src: 'https://vantage-compute-public-assets.s3.us-east-1.amazonaws.com/branding/vantage-logo-text-white-horz.png',
