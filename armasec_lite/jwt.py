@@ -8,7 +8,7 @@ that is the part with a long CVE history and no business being hand written.
 
 ### The verification order in `decode`
 
-The order of the six steps below is a security property, not an implementation detail.
+The order of the seven steps below is a security property, not an implementation detail.
 Each one exists to make a specific forgery impossible, and several of them only work
 because of what has already been rejected by the time they run. Reordering them, or
 moving work between them, reintroduces the attack the arrangement defends against.
@@ -25,17 +25,30 @@ moving work between them, reintroduces the attack the arrangement defends agains
 3. **Critical headers.** RFC 7515 section 4.1.11 requires refusing a `crit` header naming
    an extension the verifier does not understand. This implementation understands none,
    so any `crit` entry at all is a refusal.
-4. **Signature, and the key type behind it.** `verify_signature` requires the JWK's `kty`
+4. **The key.** The key is chosen from the header parsed in step 1 and from nothing else.
+   `decode` takes a key directly; `decode_selecting_key`, which holds the implementation
+   and is what `TokenDecoder` calls, asks a caller-supplied selector for one. The selector
+   is handed the header this module parsed and returns a key: it never supplies the bytes
+   that key is checked against, so a caller cannot present one header for key selection
+   and a different one for the signature. That is why the selector is a callback rather
+   than a pre-parsed header passed in, which would trade a structural guarantee for a
+   convention. Selecting a key by the unverified `kid` is safe because the key still has
+   to verify the signature in step 5; choosing the wrong one only means the token fails.
+   This runs after step 2 so that a token naming an algorithm the route does not permit
+   cannot reach a JWKS lookup at all, and it runs whether or not `verify_signature` is
+   set, so that turning the signature check off does not also drop the `kid` requirement.
+5. **Signature, and the key type behind it.** `verify_signature` requires the JWK's `kty`
    to match the algorithm family (see `_REQUIRED_KTY`) before any key material is read,
    which is what blocks the classic confusion attack of signing with HS256 while the
    server holds an RSA public key and uses it as the HMAC secret. For ECDSA, the curve
    and the coordinate size come from `_EC_CURVES`, keyed on the ALGORITHM name, and never
    from the JWK's own `crv`, so a hostile or compromised JWKS cannot substitute a weaker
-   curve than the one the route agreed to accept.
-5. **Claims, and only now.** The payload is not parsed until the signature has verified.
+   curve than the one the route agreed to accept. An RSA modulus below `MIN_RSA_KEY_BITS`
+   is refused here too, for the same reason the curve is pinned.
+6. **Claims, and only now.** The payload is not parsed until the signature has verified.
    Nothing an attacker writes into the payload is looked at, let alone trusted, before
    the key has vouched for the bytes that carry it.
-6. **Registered claim checks.** `exp`, `nbf`, `aud` and `iss` are checked against the
+7. **Registered claim checks.** `exp`, `nbf`, `aud` and `iss` are checked against the
    caller's requirements, with `leeway` applied to the two time-based ones.
 
 ### The constants
@@ -100,6 +113,7 @@ import json
 import math
 import re
 import time
+from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
 
@@ -746,11 +760,110 @@ def decode(
     Nothing the token says about which algorithm to use is honored. `algorithms` is the
     authority, and callers in this library pass exactly one, from `DomainConfig`.
 
+    This is the jose-shaped entry point, for a caller that has already picked a key.
+    `decode_selecting_key` holds the implementation and is what `TokenDecoder` uses, so
+    that a caller holding a whole JWKS does not have to parse the header a second time to
+    find one.
+
     Args:
         token:      The compact serialization to decode.
         jwk:        The key to verify against, already selected by `kid`. Selecting it by
                     the unverified `kid` is safe precisely because that key still has to
                     verify the signature below.
+        algorithms: The permitted algorithms. The token's own `alg` must appear here.
+        audience:   Required audience. When None, `aud` is not checked.
+        issuer:     Required issuer. When None, `iss` is not checked. Compared by exact
+                    string equality against the value the provider published, which is
+                    why `OpenidConfig.issuer` is never normalized.
+        options:    Toggles for individual checks, such as `{"verify_aud": False}`. Only
+                    the keys in `_DEFAULT_OPTIONS` are understood; anything else is
+                    ignored, matching the permissive behavior of the jose-shaped API this
+                    replaces. Setting `verify_signature` False accepts every token and is
+                    a testing switch only.
+        leeway:     Seconds of clock skew tolerated on `exp` and `nbf`.
+
+    Returns:
+        The verified claims, exactly as the payload carried them. No claim is renamed,
+        coerced or added.
+
+    Raises:
+        InvalidTokenError: The token is not a well formed JWS, a segment is not valid
+            base64url or valid JSON, a segment carries `Infinity`, `-Infinity` or `NaN`,
+            the header carries a `crit` member, or `exp`, `nbf` or `iat` is present and is
+            not a finite number in the float range. Maps to 401.
+        InvalidAlgorithmError: The token is an unsecured JWS, carries no `alg`, names an
+            algorithm absent from `algorithms`, or names one whose family does not match
+            the JWK's `kty`. This is the `alg: none` and algorithm-confusion refusal.
+            Maps to 401.
+        InvalidKeyError: The JWK is missing a member its key type requires. Maps to 401,
+            but points at the provider's JWKS rather than at the token.
+        InvalidSignatureError: The signature did not verify against the key. Maps to 401.
+        ExpiredSignatureError: `exp` is in the past, beyond `leeway`. Maps to 401, and is
+            the one failure a well-behaved client should respond to by refreshing its
+            token rather than by treating the request as rejected outright.
+        ImmatureSignatureError: `nbf` is in the future, beyond `leeway`. Maps to 401.
+        InvalidAudienceError: `audience` was required and the token's `aud` is missing or
+            does not contain it. Maps to 401.
+        InvalidIssuerError: `issuer` was required and the token's `iss` is missing or
+            does not match it exactly. Maps to 401.
+    """
+    return decode_selecting_key(
+        token,
+        lambda _header: jwk,
+        algorithms,
+        audience=audience,
+        issuer=issuer,
+        options=options,
+        leeway=leeway,
+    )
+
+
+def decode_selecting_key(
+    token: str,
+    select_key: Callable[[dict[str, Any]], JWK],
+    algorithms: list[str],
+    *,
+    audience: str | None = None,
+    issuer: str | None = None,
+    options: dict[str, bool] | None = None,
+    leeway: float = 0.0,
+) -> dict[str, Any]:
+    """
+    Decode and fully validate a JWT, choosing the key once the header has been read.
+
+    The implementation behind `decode`, and the only one: `decode` is this function with a
+    selector that ignores the header and returns the key it was given.
+
+    The selector exists so that a caller holding a whole JWKS does not have to parse the
+    header itself to find `kid` and then hand the token back to be parsed a second time.
+    It is handed the header THIS function parsed from the token's own bytes, and it returns
+    a key. It never supplies the bytes that key is checked against, which is what keeps the
+    arrangement safe: a caller cannot present one header for key selection and a different
+    one for the signature.
+
+    It is called after the algorithm allowlist and `crit` checks, not before. Key selection
+    used to run ahead of every check, so a token naming `alg: none` and an unknown `kid`
+    reported the missing key and drove an outbound JWKS refetch on behalf of a token that
+    could never have verified. It runs whether or not `verify_signature` is set, so that
+    turning the signature check off does not also turn off the `kid` requirement.
+
+    The order of operations below is a security property, not an implementation detail.
+    In short: structure, then the algorithm from the CALLER's allowlist, then critical
+    headers, then the signature (with the JWK's key type checked against the algorithm
+    family and the ECDSA curve taken from the algorithm rather than from the key), and
+    only then are any claims parsed or trusted. The module docstring sets out each step
+    and the attack it forecloses. Read it before changing anything here.
+
+    Nothing the token says about which algorithm to use is honored. `algorithms` is the
+    authority, and callers in this library pass exactly one, from `DomainConfig`.
+
+    Args:
+        token:      The compact serialization to decode.
+        select_key: Called with the token's parsed but entirely unverified header, and
+                    returns the key to verify with. Choosing a key by the unverified `kid`
+                    is safe precisely because that key still has to verify the signature
+                    below. Anything it raises propagates, which is how `TokenDecoder`
+                    reports an unknown `kid`.
         algorithms: The permitted algorithms. The token's own `alg` must appear here.
         audience:   Required audience. When None, `aud` is not checked.
         issuer:     Required issuer. When None, `iss` is not checked. Compared by exact
@@ -818,13 +931,19 @@ def decode(
             raise InvalidTokenError("Token header 'crit' is not a list")
         raise InvalidTokenError(f"Token header 'crit' names unsupported extensions: {crit}")
 
-    # 4. Signature, before any claim is read. Step 3 of verify_signature also requires the
-    #    JWK's kty to match the algorithm family.
+    # 4. The key, chosen from the header this function parsed and from nothing else. It
+    #    comes after the allowlist check so that a token the route would never accept
+    #    cannot reach a JWKS lookup, and before the `verify_signature` switch so that
+    #    turning the signature check off does not also drop the `kid` requirement.
+    jwk = select_key(header)
+
+    # 5. Signature, before any claim is read. verify_signature also requires the JWK's kty
+    #    to match the algorithm family.
     if opts["verify_signature"]:
         signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
         verify_signature(algorithm, jwk, signing_input, b64url_decode(signature_b64))
 
-    # 5. Only now are the claims worth reading.
+    # 6. Only now are the claims worth reading.
     claims = _decode_json_segment(payload_b64, "payload")
     now = time.time()
 

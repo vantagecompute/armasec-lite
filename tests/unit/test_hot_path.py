@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from pydantic import BaseModel
 from starlette.datastructures import Headers
 
-from armasec_lite import token_security
+from armasec_lite import jwt, token_security
 from armasec_lite.jwt import b64url_encode
 from armasec_lite.schemas import JWK, JWKs, OpenidConfig, PermissionMode
 from armasec_lite.token_decoder import TokenDecoder
@@ -211,3 +211,71 @@ def test_checking_scopes_still_logs_when_a_logger_is_supplied() -> None:
     )
     security._check_scopes(TokenPayload(sub="test-user", permissions=["read:stuff"]))
     assert any("Checking my permissions" in message for message in messages)
+
+
+def test_warm_decode_parses_each_segment_once(
+    jwks: JWKs, token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    A decode base64-decodes and JSON-parses the header once, not twice.
+
+    `TokenDecoder.decode` used to call `get_decode_key`, which parsed the header to read
+    `kid`, and then hand the token to `jwt.decode`, which parsed it again to read `alg`.
+    The second parse was not redundancy for its own sake: `decode` re-reading the header
+    from the token's own bytes is what stops a caller from supplying one header while the
+    signature covers another. Passing a parsed header in would have traded that structural
+    guarantee for a convention.
+
+    The fix keeps the guarantee and drops the work, by having `decode` own the only parse
+    and ask the caller which key to use once it has one.
+    """
+    parsed: list[str] = []
+    original = jwt._decode_json_segment
+
+    def recording(segment: str, label: str) -> dict[str, Any]:
+        parsed.append(label)
+        return original(segment, label)
+
+    monkeypatch.setattr(jwt, "_decode_json_segment", recording)
+    TokenDecoder(jwks).decode(token)
+    assert parsed == ["header", "payload"]
+
+
+def test_key_selection_happens_after_the_algorithm_allowlist(jwks: JWKs, rsa_private: Any) -> None:
+    """
+    A token naming a disallowed algorithm never reaches key selection.
+
+    Key selection used to run first, before anything had been checked, so an `alg: none`
+    token carrying an unknown `kid` reported `UnknownKeyIdError` and drove an outbound
+    JWKS refetch on behalf of a token that could never have verified. Selecting the key
+    after the allowlist check closes that: the refresh path is now reachable only by a
+    token whose algorithm the route actually permits.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def select(header: dict[str, Any]) -> JWK:
+        seen.append(header)
+        raise AssertionError("key selection must not run for a disallowed algorithm")
+
+    head = b64url_encode(json.dumps({"alg": "none", "kid": "no-such-kid"}).encode())
+    body = b64url_encode(json.dumps({"sub": "admin"}).encode())
+    with pytest.raises(jwt.InvalidAlgorithmError):
+        jwt.decode_selecting_key(f"{head}.{body}.AA", select, ["RS256"])
+    assert seen == []
+
+
+def test_key_selection_sees_the_token_own_header(jwks: JWKs, token: str, rsa_jwk: JWK) -> None:
+    """
+    The selector is handed the header `decode` parsed from the token, not one it supplied.
+
+    This is the property that makes the callback safe. The selector chooses a key; it never
+    supplies the bytes that key is checked against.
+    """
+    seen: list[dict[str, Any]] = []
+
+    def select(header: dict[str, Any]) -> JWK:
+        seen.append(header)
+        return rsa_jwk
+
+    jwt.decode_selecting_key(token, select, ["RS256"])
+    assert seen == [{"alg": "RS256", "kid": "rsa-test"}]

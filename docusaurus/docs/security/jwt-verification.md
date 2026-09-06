@@ -68,7 +68,32 @@ token outright, rather than silently ignoring a header that changes how the toke
 interpreted. This has to happen before the signature is trusted to mean what the rest of
 the code assumes it means.
 
-### 4. Signature verification, with the key-type check inside it
+### 4. Key selection
+
+The key is chosen from the header parsed in step 1, and from nothing else.
+
+`decode` takes a key directly, for a caller that has already picked one.
+`decode_selecting_key` holds the implementation and is what `TokenDecoder` uses: it hands
+a caller-supplied selector the header it parsed, and the selector returns a key. The
+selector chooses a key; it never supplies the bytes that key is checked against. That is
+the whole reason it is a callback rather than a pre-parsed header passed in as an
+argument. A caller that could pass a header alongside a token could present one header for
+key selection and a different one for the signature, which would turn a structural
+guarantee into a convention.
+
+Choosing a key by the unverified `kid` is safe because the key still has to verify the
+signature in step 5. Choosing the wrong one only means the token fails.
+
+Two things about the placement are deliberate:
+
+- **It runs after step 2**, so a token naming an algorithm the route does not permit
+  cannot reach a JWKS lookup at all. Key selection used to run ahead of every check, which
+  meant an `alg: none` token carrying an unknown `kid` reported the missing key and drove
+  an outbound JWKS refetch on behalf of a token that could never have verified.
+- **It runs whether or not `verify_signature` is set**, so turning the signature check off
+  for testing does not also drop the `kid` requirement.
+
+### 5. Signature verification, with the key-type check inside it
 
 Verify the signature over the ASCII bytes of `f"{header_b64}.{payload_b64}"`, before
 parsing or trusting any claim.
@@ -90,7 +115,7 @@ on. No claim value, including `exp`, `aud`, or `iss`, is read or trusted until t
 confirmed to be signed by the key it claims to be signed by, under an algorithm the caller
 actually allowed, with a key of the right type for that algorithm.
 
-### 5. Claim validation
+### 6. Claim validation
 
 Only after signature verification succeeds, validate claims: `exp`, `nbf`, `iat`, `aud`,
 `iss`, each honoring `leeway`.
