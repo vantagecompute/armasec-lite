@@ -192,6 +192,16 @@ services:
       HARNESS_COMPOSE_PROJECT: armasec-comparison
       HARNESS_RESULTS_DIR: /results
       HARNESS_CGROUP_ROOT: /host/sys/fs/cgroup
+      # The bench container has no checkout, so the host passes in what git says about the
+      # tree the app images were built from. The version alone cannot identify that: it
+      # comes from pyproject.toml and does not move between releases, so two runs of two
+      # different commits file under one version and become indistinguishable. Empty when
+      # the run was not driven by `just compare-legacy`, which the provenance records as
+      # "not recorded" rather than guessing.
+      HARNESS_GIT_DESCRIBE: ${HARNESS_GIT_DESCRIBE:-}
+      HARNESS_GIT_COMMIT: ${HARNESS_GIT_COMMIT:-}
+      HARNESS_GIT_BRANCH: ${HARNESS_GIT_BRANCH:-}
+      HARNESS_GIT_DIRTY: ${HARNESS_GIT_DIRTY:-}
     volumes:
       - ./results:/results
       - /var/run/docker.sock:/var/run/docker.sock

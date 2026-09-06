@@ -357,6 +357,40 @@ def container_limits(docker: Docker, service: str) -> dict[str, Any]:
     }
 
 
+def git_state() -> dict[str, Any] | None:
+    """
+    Read what the host said about the tree the application images were built from.
+
+    The bench container holds no checkout, so this cannot be measured here; the values
+    arrive as `HARNESS_GIT_*` environment variables, set by `just compare-legacy` from the
+    host repository before the stack is built.
+
+    It exists because the version cannot do this job. The version comes from
+    `pyproject.toml` and does not move between releases, so two runs measuring two
+    different commits file under one version directory and nothing in the results tells
+    them apart. That is not hypothetical: the branch that added this measured a change with
+    the version unchanged from the one already released.
+
+    `dirty` is recorded rather than refused. A measurement of an uncommitted tree is still
+    worth having, as long as it does not claim to be a measurement of the commit it is not.
+
+    Returns:
+        The git block, or None when the run was not driven by `just compare-legacy` and
+        nothing was supplied. None is written through to the result files as a null, so a
+        reader and the page generator both see "not recorded" rather than a guess.
+    """
+    describe = os.environ.get("HARNESS_GIT_DESCRIBE", "").strip()
+    commit = os.environ.get("HARNESS_GIT_COMMIT", "").strip()
+    if not describe and not commit:
+        return None
+    return {
+        "describe": describe or None,
+        "commit": commit or None,
+        "branch": os.environ.get("HARNESS_GIT_BRANCH", "").strip() or None,
+        "dirty": os.environ.get("HARNESS_GIT_DIRTY", "").strip().lower() == "true",
+    }
+
+
 def provenance(docker: Docker, versions: dict[str, str], reps: int) -> dict[str, Any]:
     """
     Collect everything needed to say what a set of numbers describes.
@@ -438,6 +472,8 @@ def provenance(docker: Docker, versions: dict[str, str], reps: int) -> dict[str,
         "keycloak_image_id": keycloak["Image"],
         "keycloak_repo_digests": image.get("RepoDigests", []),
         "library_versions": versions,
+        # What the version cannot say. See `git_state`.
+        "git": git_state(),
         "app_container_limits": {"identical": True, "legacy": legacy_limits, "lite": lite_limits},
         "cgroup": cgroups,
     }
