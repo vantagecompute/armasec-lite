@@ -3,19 +3,44 @@ name = "armasec-lite"
 version = "0.1.3"
 description = "Injectable FastAPI auth via OIDC, with three dependencies"
 authors = [{name = "Vantage Compute", email = "info@vantagecompute.ai"}]
-license = {text = "MIT"}
+maintainers = [{name = "Vantage Compute", email = "info@vantagecompute.ai"}]
+# PEP 639 SPDX expression, not the older `{text = "MIT"}` table. Metadata 2.4 forbids a
+# distribution from carrying both a License-Expression and a `License ::` classifier, so
+# the "License :: OSI Approved :: MIT License" classifier was removed with this change.
+# Keeping both makes PyPI reject the upload.
+license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.12"
-keywords = ["fastapi", "auth", "oidc", "oauth2", "security", "jwt"]
+keywords = [
+    "fastapi",
+    "auth",
+    "authentication",
+    "authorization",
+    "oidc",
+    "openid-connect",
+    "oauth2",
+    "keycloak",
+    "auth0",
+    "security",
+    "jwt",
+    "jwks",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Framework :: FastAPI",
+    "Framework :: Pytest",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration :: Authentication/Directory",
+    "Typing :: Typed",
 ]
 dependencies = [
     "fastapi>=0.141.1,<1",
@@ -23,9 +48,15 @@ dependencies = [
     "pydantic>=2.13.5,<3",
 ]
 
+# PyPI renders these as the project page's sidebar links, and it recognises these five
+# names specifically, giving each its own icon. A sixth name under some other label would
+# render as a plain bullet, so it is not worth adding one.
 [project.urls]
-Homepage = "https://github.com/vantagecompute/armasec-lite"
+Homepage = "https://docs.vantagecompute.ai/developer/armasec-lite/"
+Documentation = "https://docs.vantagecompute.ai/developer/armasec-lite/"
 Repository = "https://github.com/vantagecompute/armasec-lite"
+Issues = "https://github.com/vantagecompute/armasec-lite/issues"
+Changelog = "https://github.com/vantagecompute/armasec-lite/releases"
 
 [project.optional-dependencies]
 test = ["pytest>=9.1.1,<10"]
@@ -79,3 +110,27 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["armasec_lite"]
+
+# An explicit allow-list, because hatchling's default is to ship everything the ROOT
+# .gitignore does not exclude, and it does not read nested ignore files. `node_modules`
+# is ignored by docusaurus/.gitignore, so the default sdist swept in 574MB of it and
+# compressed to a 115.7MB tarball: over PyPI's 100MB per-file limit, and therefore a
+# release that fails at upload rather than at build. Naming the contents is also the
+# only way the list stays reviewable as the repository grows a fourth or fifth
+# top-level directory of benchmark harness and docs site.
+[tool.hatch.build.targets.sdist]
+include = [
+    "armasec_lite",
+    "tests",
+    "examples",
+    "README.md",
+    "LICENSE",
+]
+# `include` alone is not sufficient. Hatchling matches `README*` and `LICEN[CS]E*`
+# recursively for the sdist, so an include list naming only the two root files still
+# pulled in 1888 of them from under docusaurus/node_modules. These two entries are what
+# actually take the tarball from 115.7MB to 105KB.
+exclude = [
+    "docusaurus",
+    "legacy_comparison_compose",
+]
