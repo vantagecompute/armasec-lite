@@ -965,18 +965,25 @@ def same_code(first: dict[str, Any], second: dict[str, Any]) -> bool | None:
     is worth trusting. Two runs of different commits differ by what we changed. The version
     cannot answer it, which is why the harness records a git block.
 
+    Where a run recorded no git block the version is the fallback, but only in the one
+    direction it can settle. Different versions are different code, which is not in doubt.
+    The same version is not evidence of the same code: it comes from `pyproject.toml` and
+    does not move between releases, so answering True there would assert exactly the thing
+    the git block was added to disprove.
+
     Args:
         first:  One run.
         second: The other.
 
     Returns:
-        True or False, or None when either run recorded no git block and the question
-        cannot be answered rather than guessed at.
+        True or False, or None when neither the git blocks nor the versions can settle it.
     """
     left, right = code_identity_of(first), code_identity_of(second)
-    if left is None or right is None:
-        return None
-    return left == right
+    if left is not None and right is not None:
+        return left == right
+    if first.get("version") != second.get("version"):
+        return False
+    return None
 
 
 def comparison_rows(
@@ -2470,7 +2477,7 @@ def against_previous_section(run: dict[str, Any], earlier: dict[str, Any] | None
     this_host = str(provenance_of(run).get("hostname", "an unknown host"))
 
     identical = same_code(run, earlier)
-    mine, theirs = code_identity_of(run), code_identity_of(earlier)
+    mine = code_identity_of(run)
     if identical is None:
         reading = (
             "**One of these two runs predates the harness recording which commit it "
@@ -2486,10 +2493,19 @@ def against_previous_section(run: dict[str, Any], earlier: dict[str, Any] | None
             "number on this page is worth trusting."
         )
     else:
+        # A run with no git block is named by its version instead. That is how the run which
+        # introduced the block reads, since its predecessor recorded none, and it is the
+        # only thing there is to name.
+        def naming(candidate: dict[str, Any]) -> str:
+            identity = code_identity_of(candidate)
+            if identity:
+                return f"`{escape(str(identity))}`"
+            return f"armasec-lite {escape(str(candidate.get('version', 'unknown')))}"
+
         reading = (
-            f"**These runs measured different code:** `{escape(str(theirs))}` then "
-            f"`{escape(str(mine))}`. A movement below larger than the noise this harness "
-            "carries is what that change did."
+            f"**These runs measured different code:** {naming(earlier)} then "
+            f"{naming(run)}. A movement below larger than the noise this harness carries is "
+            "what that change did."
         )
 
     machine = (

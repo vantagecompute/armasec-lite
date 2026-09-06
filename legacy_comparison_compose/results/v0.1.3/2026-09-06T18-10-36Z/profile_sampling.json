@@ -1,0 +1,265 @@
+{
+  "scenario": "profile",
+  "title": "Poor man's profiler: where each arm's event loop thread was during a cold load",
+  "question": "Does the cold OIDC load run on the event loop thread or off it?",
+  "config": {
+    "method": "sys._current_frames() sampled by a daemon thread inside each app",
+    "interval_ms": 5.0,
+    "workload": "the S4 workload repeated, not measured concurrently with it",
+    "health_rate_per_second": 40.0,
+    "injected_provider_latency_ms": 500,
+    "idle_marker": "selectors.py:select",
+    "http_client_markers": [
+      "sync.py:read",
+      "http11.py:",
+      "connection_pool.py:",
+      "client.py:getresponse",
+      "client.py:_read_status",
+      "request.py:do_open"
+    ]
+  },
+  "measurements": {
+    "legacy": {
+      "profiler": {
+        "running": true,
+        "interval_ms": 5.0,
+        "samples": 1563,
+        "loop": 126154397516608
+      },
+      "samples_per_thread": {
+        "loop": 1563
+      },
+      "loop_thread_samples": 1563,
+      "loop_thread_samples_idle_in_selector": 1311,
+      "loop_thread_samples_busy": 252,
+      "loop_thread_samples_in_blocking_http_client": 199,
+      "loop_thread_blocked_share": 0.127319257837492,
+      "worker_thread_samples_in_blocking_http_client": 0,
+      "threads_seen": [
+        "loop"
+      ],
+      "cold_auth_request_ms": 1075.972487218678,
+      "cold_auth_status": 200,
+      "worst_health_ms": 1077.2887412458658,
+      "top_signatures": {
+        "loop": [
+          {
+            "samples": 1311,
+            "signature": "selectors.py:select:468;base_events.py:_run_once:1961;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621;main.py:main:440;core.py:invoke:910;core.py:invoke:1415;core.py:main:1552"
+          },
+          {
+            "samples": 198,
+            "signature": "sync.py:read:128;http11.py:_receive_event:217;http11.py:_receive_response_headers:177;http11.py:handle_request:106;connection.py:handle_request:103;connection_pool.py:handle_request:236;default.py:handle_request:250;_client.py:_send_single_request:1014;_client.py:_send_handling_redirects:979;_client.py:_send_handling_auth:942;_client.py:send:914;_client.py:request:825"
+          },
+          {
+            "samples": 21,
+            "signature": "selector_events.py:write:1075;h11_impl.py:send:495;errors.py:_send:161;_exception_handler.py:sender:39;_exception_handler.py:sender:39;responses.py:__call__:166;routing.py:app:145;_exception_handler.py:wrapped_app:42;routing.py:app:158;routing.py:handle:280;routing.py:handle:1281;routing.py:app:2734"
+          },
+          {
+            "samples": 8,
+            "signature": "socket.py:_real_close:499;socket.py:close:505;selector_events.py:_call_connection_lost:913;selector_events.py:_call_connection_lost:1193;events.py:_run:88;base_events.py:_run_once:1999;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621"
+          },
+          {
+            "samples": 6,
+            "signature": "socket.py:accept:295;selector_events.py:_accept_connection:178;events.py:_run:88;base_events.py:_run_once:1999;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621;main.py:main:440;core.py:invoke:910"
+          },
+          {
+            "samples": 3,
+            "signature": "trsock.py:getpeername:77;utils.py:get_remote_addr:17;h11_impl.py:connection_made:100;events.py:_run:88;base_events.py:_run_once:1999;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621;main.py:main:440"
+          },
+          {
+            "samples": 3,
+            "signature": "ssl.py:create_default_context:707;_config.py:create_ssl_context:40;default.py:__init__:153;_client.py:_init_transport:731;_client.py:__init__:688;_api.py:request:102;_api.py:get:195;openid_config_loader.py:_load_openid_resource:64;openid_config_loader.py:jwks:98;token_security.py:_load_manager:225;token_security.py:_load_all_managers:204;token_security.py:_extract_token_payload_from_manager:241"
+          },
+          {
+            "samples": 2,
+            "signature": "selector_events.py:_read_ready__data_received:1013;selector_events.py:_read_ready:970;events.py:_run:88;base_events.py:_run_once:1999;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621;main.py:main:440;core.py:invoke:910"
+          },
+          {
+            "samples": 2,
+            "signature": "selectors.py:register:359;selector_events.py:_add_reader:284;selector_events.py:_add_reader:928;events.py:_run:88;base_events.py:_run_once:1999;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621;main.py:main:440"
+          },
+          {
+            "samples": 2,
+            "signature": "ssl.py:create_default_context:707;_config.py:create_ssl_context:40;default.py:__init__:153;_client.py:_init_transport:731;_client.py:__init__:688;_api.py:request:102;_api.py:get:195;openid_config_loader.py:_load_openid_resource:64;openid_config_loader.py:config:79;openid_config_loader.py:jwks:98;token_security.py:_load_manager:225;token_security.py:_load_all_managers:204"
+          },
+          {
+            "samples": 1,
+            "signature": "<frozen importlib._bootstrap_external>:_path_stat:147;<frozen importlib._bootstrap_external>:find_spec:1605;<frozen importlib._bootstrap_external>:_get_spec:1506;<frozen importlib._bootstrap_external>:find_spec:1532;<frozen importlib._bootstrap>:_find_spec:1262;<frozen importlib._bootstrap>:_find_and_load_unlocked:1322;<frozen importlib._bootstrap>:_find_and_load:1360;default.py:__init__:150;_client.py:_init_transport:731;_client.py:__init__:688;_api.py:request:102;_api.py:get:195"
+          },
+          {
+            "samples": 1,
+            "signature": "<frozen importlib._bootstrap_external>:_path_stat:147;<frozen importlib._bootstrap_external>:find_spec:1605;<frozen importlib._bootstrap_external>:_get_spec:1506;<frozen importlib._bootstrap_external>:find_spec:1532;<frozen importlib._bootstrap>:_find_spec:1262;<frozen importlib._bootstrap>:_find_and_load_unlocked:1322;<frozen importlib._bootstrap>:_find_and_load:1360;sync.py:<module>:20;<frozen importlib._bootstrap>:_call_with_frames_removed:488;<frozen importlib._bootstrap_external>:exec_module:999;<frozen importlib._bootstrap>:_load_unlocked:935;<frozen importlib._bootstrap>:_find_and_load_unlocked:1331"
+          },
+          {
+            "samples": 1,
+            "signature": "<frozen importlib._bootstrap_external>:_path_stat:147;<frozen importlib._bootstrap_external>:find_spec:1605;<frozen importlib._bootstrap_external>:_get_spec:1506;<frozen importlib._bootstrap_external>:find_spec:1532;<frozen importlib._bootstrap>:_find_spec:1262;<frozen importlib._bootstrap>:_find_and_load_unlocked:1322;<frozen importlib._bootstrap>:_find_and_load:1360;__init__.py:<module>:8;<frozen importlib._bootstrap>:_call_with_frames_removed:488;<frozen importlib._bootstrap_external>:exec_module:999;<frozen importlib._bootstrap>:_load_unlocked:935;<frozen importlib._bootstrap>:_find_and_load_unlocked:1331"
+          },
+          {
+            "samples": 1,
+            "signature": "<frozen importlib._bootstrap_external>:_path_stat:147;<frozen importlib._bootstrap_external>:find_spec:1605;<frozen importlib._bootstrap_external>:_get_spec:1506;<frozen importlib._bootstrap_external>:find_spec:1532;<frozen importlib._bootstrap>:_find_spec:1262;<frozen importlib._bootstrap>:_find_and_load_unlocked:1322;<frozen importlib._bootstrap>:_find_and_load:1360;__init__.py:<module>:18;<frozen importlib._bootstrap>:_call_with_frames_removed:488;<frozen importlib._bootstrap_external>:exec_module:999;<frozen importlib._bootstrap>:_load_unlocked:935;<frozen importlib._bootstrap>:_find_and_load_unlocked:1331"
+          },
+          {
+            "samples": 1,
+            "signature": "socket.py:getaddrinfo:978;socket.py:create_connection:841;sync.py:connect_tcp:208;connection.py:_connect:124;connection.py:handle_request:78;connection_pool.py:handle_request:236;default.py:handle_request:250;_client.py:_send_single_request:1014;_client.py:_send_handling_redirects:979;_client.py:_send_handling_auth:942;_client.py:send:914;_client.py:request:825"
+          }
+        ]
+      }
+    },
+    "lite": {
+      "profiler": {
+        "running": true,
+        "interval_ms": 5.0,
+        "samples": 1561,
+        "loop": 125765463376704
+      },
+      "samples_per_thread": {
+        "loop": 1561,
+        "asyncio_0(125765405525696)": 1168
+      },
+      "loop_thread_samples": 1561,
+      "loop_thread_samples_idle_in_selector": 1514,
+      "loop_thread_samples_busy": 47,
+      "loop_thread_samples_in_blocking_http_client": 0,
+      "loop_thread_blocked_share": 0.0,
+      "worker_thread_samples_in_blocking_http_client": 198,
+      "threads_seen": [
+        "asyncio_0(125765405525696)",
+        "loop"
+      ],
+      "cold_auth_request_ms": 1041.7596362531185,
+      "cold_auth_status": 200,
+      "worst_health_ms": 8.526096493005841,
+      "top_signatures": {
+        "loop": [
+          {
+            "samples": 1514,
+            "signature": "selectors.py:select:468;base_events.py:_run_once:1961;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621;main.py:main:440;core.py:invoke:910;core.py:invoke:1415;core.py:main:1552"
+          },
+          {
+            "samples": 20,
+            "signature": "selector_events.py:write:1075;h11_impl.py:send:495;errors.py:_send:161;_exception_handler.py:sender:39;_exception_handler.py:sender:39;responses.py:__call__:166;routing.py:app:145;_exception_handler.py:wrapped_app:42;routing.py:app:158;routing.py:handle:280;routing.py:handle:1281;routing.py:app:2734"
+          },
+          {
+            "samples": 6,
+            "signature": "socket.py:_real_close:499;socket.py:close:505;selector_events.py:_call_connection_lost:913;selector_events.py:_call_connection_lost:1193;events.py:_run:88;base_events.py:_run_once:1999;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621"
+          },
+          {
+            "samples": 5,
+            "signature": "trsock.py:getpeername:77;utils.py:get_remote_addr:17;h11_impl.py:connection_made:100;events.py:_run:88;base_events.py:_run_once:1999;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621;main.py:main:440"
+          },
+          {
+            "samples": 4,
+            "signature": "socket.py:accept:295;selector_events.py:_accept_connection:178;events.py:_run:88;base_events.py:_run_once:1999;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621;main.py:main:440;core.py:invoke:910"
+          },
+          {
+            "samples": 4,
+            "signature": "selector_events.py:_read_ready__data_received:1013;selector_events.py:_read_ready:970;events.py:_run:88;base_events.py:_run_once:1999;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621;main.py:main:440;core.py:invoke:910"
+          },
+          {
+            "samples": 4,
+            "signature": "selector_events.py:write:1075;h11_impl.py:send:508;errors.py:_send:161;_exception_handler.py:sender:39;_exception_handler.py:sender:39;responses.py:__call__:167;routing.py:app:145;_exception_handler.py:wrapped_app:42;routing.py:app:158;routing.py:handle:280;routing.py:handle:1281;routing.py:app:2734"
+          },
+          {
+            "samples": 2,
+            "signature": "selectors.py:unregister:368;selector_events.py:_remove_reader:305;selector_events.py:close:871;selector_events.py:close:1213;h11_impl.py:send:524;errors.py:_send:161;_exception_handler.py:sender:39;_exception_handler.py:sender:39;responses.py:__call__:167;routing.py:app:145;_exception_handler.py:wrapped_app:42;routing.py:app:158"
+          },
+          {
+            "samples": 1,
+            "signature": "selector_events.py:_accept_connection:182;events.py:_run:88;base_events.py:_run_once:1999;base_events.py:run_forever:645;base_events.py:run_until_complete:678;runners.py:run:118;runners.py:run:195;server.py:run:77;main.py:run:621;main.py:main:440;core.py:invoke:910;core.py:invoke:1415"
+          },
+          {
+            "samples": 1,
+            "signature": "threading.py:wait:355;threading.py:wait:655;threading.py:start:999;thread.py:_adjust_thread_count:203;thread.py:submit:180;base_events.py:run_in_executor:867;token_security.py:__call__:267;utils.py:solve_dependencies:674;routing.py:app:481;routing.py:app:144;_exception_handler.py:wrapped_app:42;routing.py:app:158"
+          }
+        ],
+        "asyncio_0(125765405525696)": [
+          {
+            "samples": 966,
+            "signature": "thread.py:_worker:90;threading.py:run:1012;threading.py:_bootstrap_inner:1075;threading.py:_bootstrap:1032"
+          },
+          {
+            "samples": 99,
+            "signature": "socket.py:readinto:720;client.py:_read_status:304;client.py:begin:343;client.py:getresponse:1478;request.py:do_open:1348;request.py:http_open:1373;request.py:_call_chain:492;request.py:_open:532;request.py:open:515;http.py:get_json:204;openid_config_loader.py:_load_openid_resource:230;openid_config_loader.py:config:259"
+          },
+          {
+            "samples": 99,
+            "signature": "socket.py:readinto:720;client.py:_read_status:304;client.py:begin:343;client.py:getresponse:1478;request.py:do_open:1348;request.py:http_open:1373;request.py:_call_chain:492;request.py:_open:532;request.py:open:515;http.py:get_json:204;openid_config_loader.py:_load_openid_resource:230;openid_config_loader.py:jwks:296"
+          },
+          {
+            "samples": 2,
+            "signature": "ssl.py:load_default_certs:534;ssl.py:create_default_context:712;http.py:_build_opener:158;http.py:get_json:202;openid_config_loader.py:_load_openid_resource:230;openid_config_loader.py:config:259;openid_config_loader.py:jwks:289;token_security.py:_load_manager:491;token_security.py:_load_all_managers:446;thread.py:run:59;thread.py:_worker:93;threading.py:run:1012"
+          },
+          {
+            "samples": 1,
+            "signature": "<frozen importlib._bootstrap_external>:_path_stat:147;<frozen importlib._bootstrap_external>:find_spec:1605;<frozen importlib._bootstrap_external>:_get_spec:1506;<frozen importlib._bootstrap_external>:find_spec:1532;<frozen importlib._bootstrap>:_find_spec:1262;<frozen importlib._bootstrap>:_find_and_load_unlocked:1322;<frozen importlib._bootstrap>:_find_and_load:1360;stringprep.py:<module>:8;<frozen importlib._bootstrap>:_call_with_frames_removed:488;<frozen importlib._bootstrap_external>:exec_module:999;<frozen importlib._bootstrap>:_load_unlocked:935;<frozen importlib._bootstrap>:_find_and_load_unlocked:1331"
+          },
+          {
+            "samples": 1,
+            "signature": "ssl.py:load_default_certs:534;ssl.py:create_default_context:712;http.py:_build_opener:158;http.py:get_json:202;openid_config_loader.py:_load_openid_resource:230;openid_config_loader.py:jwks:296;token_security.py:_load_manager:491;token_security.py:_load_all_managers:446;thread.py:run:59;thread.py:_worker:93;threading.py:run:1012;threading.py:_bootstrap_inner:1075"
+          }
+        ]
+      }
+    }
+  },
+  "verdicts": {
+    "loop_thread_blocked_share": "upstream 12.7% vs armasec-lite 0.0% of loop-thread samples inside a blocking HTTP client"
+  },
+  "provenance": {
+    "timestamp_utc": "2026-09-06T18:10:36+00:00",
+    "hostname": "raton-actions-00",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+    "cpu_count": 8,
+    "memory_total_bytes": 33284620288,
+    "kernel": "6.8.0-134-generic",
+    "operating_system": "Ubuntu 24.04.4 LTS",
+    "docker_version": "29.6.0",
+    "docker_api_version": "1.55",
+    "repetitions": 5,
+    "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+    "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+    "keycloak_repo_digests": [
+      "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+    ],
+    "library_versions": {
+      "legacy": "legacy 3.0.3",
+      "lite": "lite 0.1.3"
+    },
+    "git": {
+      "describe": "v0.1.3-5-g0fb4ecd",
+      "commit": "0fb4ecd62c2e28034afd1f0beb739b7a00ad0535",
+      "branch": "perf/hot-path-and-hardening",
+      "dirty": false
+    },
+    "app_container_limits": {
+      "identical": true,
+      "legacy": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-legacy",
+        "image_id": "sha256:96b33ba20406f698612faf45c571c798c9b8328af954098736772388a056601e"
+      },
+      "lite": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-lite",
+        "image_id": "sha256:27aaa9d40f7c6b5d5cb8719a0389dd965b017599da556d64d8fdf1a668e0dd4c"
+      }
+    },
+    "cgroup": {
+      "version": "v2",
+      "root_mounted_at": "/host/sys/fs/cgroup",
+      "memory_peak_resettable": false
+    },
+    "run_id": "2026-09-06T18-10-36Z",
+    "armasec_lite_version": "0.1.3",
+    "quick_mode": false
+  },
+  "elapsed_seconds": 19.1
+}

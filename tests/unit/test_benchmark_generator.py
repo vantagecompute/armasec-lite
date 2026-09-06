@@ -255,3 +255,33 @@ def test_arm_quantity_refuses_a_value_that_is_not_a_number() -> None:
     document = {"measurements": {"broken": {"lite": "fast"}}}
     with pytest.raises(gen.GenerationError):
         gen.arm_quantity(document, ("measurements", "broken", "{arm}"), "lite", "x")
+
+
+def test_different_versions_are_different_code_even_without_a_git_block() -> None:
+    """
+    The version still settles the question when it moved, and only when it moved.
+
+    Falling back to it matters for the run that introduced the git block: its predecessor
+    recorded none, so comparing identities cannot answer, while the versions plainly differ
+    and the answer is not in doubt. Reporting that as unsettled would hedge a page about the
+    one comparison it exists to make.
+    """
+    old = make_run("old", "2026-09-05T01:00:00+00:00", lite=1.0, legacy=2.0, git=None)
+    old["version"] = "0.1.0"
+    new = make_run("new", "2026-09-06T01:00:00+00:00", lite=1.0, legacy=2.0, git=GIT_A)
+    new["version"] = "0.1.3"
+    assert gen.same_code(new, old) is False
+
+
+def test_the_same_version_without_a_git_block_stays_unsettled() -> None:
+    """
+    A matching version is not evidence the code matched, which is the whole reason for git.
+
+    The version comes from `pyproject.toml` and does not move between releases, so two runs
+    reporting one version can be two different commits. Answering True here would make the
+    fallback assert exactly the thing the git block was added to disprove.
+    """
+    first = make_run("a", "2026-09-05T01:00:00+00:00", lite=1.0, legacy=2.0, git=None)
+    second = make_run("b", "2026-09-05T02:00:00+00:00", lite=1.0, legacy=2.0, git=None)
+    assert first["version"] == second["version"]
+    assert gen.same_code(first, second) is None
