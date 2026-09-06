@@ -110,3 +110,83 @@ def test_importing_armasec_lite_does_not_load_pem_serialization():
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert result.stdout.strip() == "False"
+
+
+def test_distribution_metadata_carries_the_pypi_project_page_fields():
+    """
+    The published metadata must fill in every field PyPI renders on a project page.
+
+    PyPI builds its sidebar from installed metadata, not from the repository, so a field
+    left out of `pyproject.toml` shows up as a missing link or an empty Meta section on
+    the release page rather than as a build failure. This test is what makes that
+    omission visible here instead of after an upload.
+
+    `License-Expression` rather than a `License ::` classifier is deliberate: PEP 639
+    metadata (2.4) rejects a distribution that carries both, so the classifier was
+    removed when the SPDX expression was added.
+    """
+    metadata = importlib.metadata.metadata("armasec-lite")
+
+    assert metadata["Summary"]
+    assert metadata.get("Author") or metadata.get("Author-email")
+    assert metadata["Requires-Python"]
+    assert metadata["Description-Content-Type"] == "text/markdown"
+
+    urls = {
+        value.split(",", 1)[0].strip(): value.split(",", 1)[1].strip()
+        for value in metadata.get_all("Project-URL") or []
+    }
+    assert {"Homepage", "Documentation", "Repository", "Issues", "Changelog"} <= urls.keys()
+
+    classifiers = set(metadata.get_all("Classifier") or [])
+    assert "Typing :: Typed" in classifiers
+    assert "Framework :: FastAPI" in classifiers
+    assert "Framework :: Pytest" in classifiers
+    assert not [c for c in classifiers if c.startswith("License ::")]
+
+
+def test_the_package_ships_a_py_typed_marker():
+    """
+    Without `py.typed`, PEP 561 tells a consumer's type checker to ignore the package.
+
+    Every signature in `armasec_lite` is annotated and the project runs mypy in strict
+    mode, so the annotations are known good. The marker is what lets a downstream
+    project actually see them: mypy and pyright both skip an installed package that has
+    no marker, silently, and treat every symbol it exports as `Any`.
+    """
+    import pathlib
+
+    marker = pathlib.Path(armasec_lite.__file__).parent / "py.typed"
+    assert marker.is_file()
+
+
+def test_the_sdist_ships_an_explicit_allow_list():
+    """
+    The source distribution must name what it contains rather than take hatchling's default.
+
+    Hatchling's default sdist is "everything the root `.gitignore` does not exclude", and
+    it does not read nested ignore files. `docusaurus/node_modules` is ignored by
+    `docusaurus/.gitignore`, so the default swept in 574MB of it and produced a 115.7MB
+    tarball, over PyPI's 100MB per-file limit. The failure surfaces at upload, after a
+    tag has been pushed.
+
+    This checks the declaration rather than building a tarball, so it stays a
+    millisecond-scale unit test. It cannot prove the build output is small; it catches
+    the regression that would make it large again, which is someone deleting the section
+    or adding a directory of harness data to it.
+    """
+    import pathlib
+    import tomllib
+
+    pyproject = pathlib.Path(__file__).parents[2] / "pyproject.toml"
+    config = tomllib.loads(pyproject.read_text())
+    sdist = config["tool"]["hatch"]["build"]["targets"]["sdist"]
+
+    assert sdist["include"], "an empty include list means hatchling falls back to its default"
+    assert "armasec_lite" in sdist["include"]
+    assert not [e for e in sdist["include"] if e.startswith(("docusaurus", "legacy_"))]
+
+    # The include list alone does not do it: hatchling matches README* and LICEN[CS]E*
+    # recursively, which caught 1888 of them under docusaurus/node_modules even with
+    # only the two root files named above.
+    assert {"docusaurus", "legacy_comparison_compose"} <= set(sdist["exclude"])
