@@ -45,7 +45,27 @@ jobs:
       # The pydoc plugin comes from npm, so there is no submodule to check out and no
       # transport rewriting to do. It used to be vendored as a git submodule whose
       # .gitmodules recorded an SSH URL that a runner has no key for.
+      #
+      # fetch-depth: 0 rather than the default 1, for the workflow_dispatch path. The
+      # navbar version badge comes from getProjectVersion() in
+      # @vantagecompute/docusaurus-theme, which shells out to
+      # `git describe --tags --always`.
+      #
+      # A tag-triggered run is fine without this: checkout resolves refs/tags/vX.Y.Z,
+      # so the tag describe needs is the very ref checked out. A dispatch runs against
+      # a branch, and checkout fetches branches with --no-tags, so the clone has no
+      # tags at all and describe falls through to `--always`. Verified against a
+      # replica of what checkout actually runs:
+      #
+      #   git fetch --no-tags --depth=1 origin <main sha> && git describe --tags --always
+      #   -> df7388b            (a bare hash, not a version)
+      #
+      # The failure is silent: the build succeeds and the site renders, so nothing
+      # catches it but reading the published header. Cheap to prevent, and every other
+      # Vantage spoke already sets it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       # The API reference is generated from docstrings by the pydoc plugin, which parses
       # the source with `ast` and never imports it. So this needs an interpreter able to
