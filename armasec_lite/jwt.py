@@ -8,7 +8,7 @@ that is the part with a long CVE history and no business being hand written.
 
 ### The verification order in `decode`
 
-The order of the six steps below is a security property, not an implementation detail.
+The order of the seven steps below is a security property, not an implementation detail.
 Each one exists to make a specific forgery impossible, and several of them only work
 because of what has already been rejected by the time they run. Reordering them, or
 moving work between them, reintroduces the attack the arrangement defends against.
@@ -25,17 +25,30 @@ moving work between them, reintroduces the attack the arrangement defends agains
 3. **Critical headers.** RFC 7515 section 4.1.11 requires refusing a `crit` header naming
    an extension the verifier does not understand. This implementation understands none,
    so any `crit` entry at all is a refusal.
-4. **Signature, and the key type behind it.** `verify_signature` requires the JWK's `kty`
+4. **The key.** The key is chosen from the header parsed in step 1 and from nothing else.
+   `decode` takes a key directly; `decode_selecting_key`, which holds the implementation
+   and is what `TokenDecoder` calls, asks a caller-supplied selector for one. The selector
+   is handed the header this module parsed and returns a key: it never supplies the bytes
+   that key is checked against, so a caller cannot present one header for key selection
+   and a different one for the signature. That is why the selector is a callback rather
+   than a pre-parsed header passed in, which would trade a structural guarantee for a
+   convention. Selecting a key by the unverified `kid` is safe because the key still has
+   to verify the signature in step 5; choosing the wrong one only means the token fails.
+   This runs after step 2 so that a token naming an algorithm the route does not permit
+   cannot reach a JWKS lookup at all, and it runs whether or not `verify_signature` is
+   set, so that turning the signature check off does not also drop the `kid` requirement.
+5. **Signature, and the key type behind it.** `verify_signature` requires the JWK's `kty`
    to match the algorithm family (see `_REQUIRED_KTY`) before any key material is read,
    which is what blocks the classic confusion attack of signing with HS256 while the
    server holds an RSA public key and uses it as the HMAC secret. For ECDSA, the curve
    and the coordinate size come from `_EC_CURVES`, keyed on the ALGORITHM name, and never
    from the JWK's own `crv`, so a hostile or compromised JWKS cannot substitute a weaker
-   curve than the one the route agreed to accept.
-5. **Claims, and only now.** The payload is not parsed until the signature has verified.
+   curve than the one the route agreed to accept. An RSA modulus below `MIN_RSA_KEY_BITS`
+   is refused here too, for the same reason the curve is pinned.
+6. **Claims, and only now.** The payload is not parsed until the signature has verified.
    Nothing an attacker writes into the payload is looked at, let alone trusted, before
    the key has vouched for the bytes that carry it.
-6. **Registered claim checks.** `exp`, `nbf`, `aud` and `iss` are checked against the
+7. **Registered claim checks.** `exp`, `nbf`, `aud` and `iss` are checked against the
    caller's requirements, with `leeway` applied to the two time-based ones.
 
 ### The constants
@@ -44,6 +57,31 @@ moving work between them, reintroduces the attack the arrangement defends agains
 256, 384 and 512, plus EdDSA. It bounds what `verify_signature` and `encode` will act on
 at all. It is not itself an allowlist for a route: `decode` takes the permitted
 algorithms from its caller, and `DomainConfig.algorithm` narrows a route to exactly one.
+
+`MAX_TOKEN_BYTES` (64 KiB) caps a token before any segment is decoded. A JSON segment has
+to be parsed before it can be measured, and the header in particular is parsed before the
+signature is checked, because `alg` decides what to verify with. So an unauthenticated
+caller controls a JSON document this module will parse. Deep array nesting drives
+CPython's JSON scanner into recursion: a 267KB token consumed 8MB of stack before raising
+`RecursionError`, an amplification of roughly thirty to one. The cap is an order of
+magnitude above any real token, and in an HTTP deployment the server's own header limit is
+usually the binding constraint anyway, but this module does not get to assume it was
+reached over HTTP.
+
+`KEY_CACHE_SIZE` (128) bounds how many reconstructed public keys are kept. Building an RSA
+key from its numbers is an OpenSSL construction that cost about a tenth of a warm decode,
+and a JWKS changes only on a rotation, so the keys are cached on the base64url members
+themselves. Keying on the material rather than on `kid` is the safety property: two JWKs
+with the same members are the same key, and two with different members can never reach
+each other's entry.
+
+`MIN_RSA_KEY_BITS` (2048) is the smallest RSA modulus `_rsa_public_key` will build a key
+from. RFC 7518 section 3.3 requires it for the RS and PS families. It is not redundant
+with `cryptography`, which refuses to GENERATE a key under 1024 bits but reconstructs any
+size at all from public numbers, so a JWKS publishing a 512 bit modulus was accepted and
+its signatures verified. That is the same threat the ECDSA curve pin addresses, from the
+other direction: strength is decided by what the route agreed to accept, never by what the
+key material asks for.
 
 ### Two switches worth knowing about
 
@@ -75,10 +113,12 @@ import json
 import math
 import re
 import time
+from collections.abc import Callable
+from functools import lru_cache
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
@@ -223,6 +263,10 @@ def split_token(token: str) -> tuple[str, str, str]:
     The segments are returned still base64url encoded and entirely unverified. Nothing
     here inspects their contents.
 
+    The length cap is applied here rather than in `decode`, so that every entry point gets
+    it: `get_unverified_header` reaches this function too, and it is called on the request
+    path before anything has been verified.
+
     Args:
         token: The compact serialization to split.
 
@@ -230,11 +274,18 @@ def split_token(token: str) -> tuple[str, str, str]:
         The header, payload and signature segments, in that order.
 
     Raises:
-        InvalidTokenError: The value is not a string, does not have exactly three
-            segments, or has an empty segment. Maps to 401.
+        InvalidTokenError: The value is not a string, is longer than `MAX_TOKEN_BYTES`,
+            does not have exactly three segments, or has an empty segment. Maps to 401.
     """
     if not isinstance(token, str):
         raise InvalidTokenError("Token is not a string")
+
+    # Checked before any segment is decoded or parsed. A JSON segment cannot be measured
+    # until it has been parsed, and parsing is where the recursion this bounds happens.
+    if len(token) > MAX_TOKEN_BYTES:
+        raise InvalidTokenError(
+            f"Token is too long: {len(token)} characters, limit is {MAX_TOKEN_BYTES}"
+        )
 
     parts = token.split(".")
     if len(parts) != 3:
@@ -331,6 +382,21 @@ _REQUIRED_KTY: dict[str, str] = {
     "Ed": "OKP",
 }
 
+#: Cap on a whole compact serialization, before any segment is decoded. Bounds the JSON
+#: parser's recursion depth, which is reachable by an unauthenticated caller through the
+#: header. See the module docstring.
+MAX_TOKEN_BYTES = 64 * 1024
+
+#: How many reconstructed public keys are held. A JWKS carries a handful of keys and gains
+#: a few more per rotation, so this is far above what any provider needs.
+KEY_CACHE_SIZE = 128
+
+#: Smallest RSA modulus a key will be built from, in bits. RFC 7518 section 3.3 requires
+#: 2048 for RS and PS. `cryptography` will not generate below 1024 but reconstructs any
+#: size from public numbers, so this is the only thing standing between a hostile JWKS and
+#: a modulus that factors on a laptop.
+MIN_RSA_KEY_BITS = 2048
+
 SUPPORTED_ALGORITHMS: frozenset[str] = frozenset(
     [f"{family}{size}" for family in ("RS", "PS", "ES", "HS") for size in ("256", "384", "512")]
     + ["EdDSA"]
@@ -402,7 +468,14 @@ def _check_kty(algorithm: str, jwk: JWK) -> None:
 
 def _rsa_public_key(jwk: JWK) -> rsa.RSAPublicKey:
     """
-    Build an RSA public key from a JWK's `n` and `e`.
+    Build an RSA public key from a JWK's `n` and `e`, refusing an undersized modulus.
+
+    The size check is the RSA counterpart of the curve pin in `_ec_public_key`. RFC 7518
+    section 3.3 requires at least 2048 bits for RS and PS, and `cryptography` does not
+    enforce it on this path: it refuses to generate a key below 1024 bits but reconstructs
+    any size at all from public numbers. Without this, a JWKS publishing a 512 bit modulus
+    would be accepted and its signatures would verify, and a modulus that small hands the
+    private half to anyone who wants to spend an afternoon on it.
 
     Args:
         jwk: The key to read, already checked to have `kty` of "RSA".
@@ -411,11 +484,50 @@ def _rsa_public_key(jwk: JWK) -> rsa.RSAPublicKey:
         The reconstructed public key.
 
     Raises:
-        InvalidKeyError: `n` or `e` is absent or empty.
+        InvalidKeyError: `n` or `e` is absent or empty, or the modulus is smaller than
+            `MIN_RSA_KEY_BITS`. Maps to 401, though an undersized modulus points at the
+            provider's JWKS rather than at the token.
         InvalidTokenError: `n` or `e` is not valid base64url.
         ValueError: `cryptography` rejected the numbers as an RSA key.
     """
-    return rsa.RSAPublicNumbers(e=_b64url_int(jwk, "e"), n=_b64url_int(jwk, "n")).public_key()
+    return _build_rsa_public_key(_required_member(jwk, "n"), _required_member(jwk, "e"))
+
+
+@lru_cache(maxsize=KEY_CACHE_SIZE)
+def _build_rsa_public_key(n: str, e: str) -> rsa.RSAPublicKey:
+    """
+    Build and cache an RSA public key from its encoded members.
+
+    Cached on the members themselves, which is what makes the cache safe: two JWKs holding
+    the same `n` and `e` are the same key, and two holding different material can never
+    reach each other's entry. Keying on anything looser, such as `kid`, would let one key
+    be verified against another's material, which is an authentication bypass rather than a
+    performance bug.
+
+    Args:
+        n: The modulus, base64url encoded.
+        e: The exponent, base64url encoded.
+
+    Returns:
+        The reconstructed public key, shared with every earlier caller that passed the same
+        members.
+
+    Raises:
+        InvalidKeyError: The modulus is smaller than `MIN_RSA_KEY_BITS`. Not cached, since
+            `lru_cache` stores return values and not exceptions, so a rejected key is
+            rebuilt and rejected again on the next attempt.
+        InvalidTokenError: A member is not valid base64url.
+        ValueError: `cryptography` rejected the numbers as an RSA key.
+    """
+    key = rsa.RSAPublicNumbers(
+        e=int.from_bytes(b64url_decode(e), "big"),
+        n=int.from_bytes(b64url_decode(n), "big"),
+    ).public_key()
+    if key.key_size < MIN_RSA_KEY_BITS:
+        raise InvalidKeyError(
+            f"RSA key is {key.key_size} bits, but at least {MIN_RSA_KEY_BITS} are required"
+        )
+    return key
 
 
 def _ec_public_key(algorithm: str, jwk: JWK) -> ec.EllipticCurvePublicKey:
@@ -440,12 +552,34 @@ def _ec_public_key(algorithm: str, jwk: JWK) -> ec.EllipticCurvePublicKey:
         ValueError: The coordinates are not a point on the algorithm's curve, which is
             what a substituted key looks like from here.
     """
+    return _build_ec_public_key(algorithm, _required_member(jwk, "x"), _required_member(jwk, "y"))
+
+
+@lru_cache(maxsize=KEY_CACHE_SIZE)
+def _build_ec_public_key(algorithm: str, x: str, y: str) -> ec.EllipticCurvePublicKey:
+    """
+    Build and cache an EC public key from its algorithm and encoded coordinates.
+
+    The algorithm is part of the cache key, not merely an argument, because it is what
+    chooses the curve. Leaving it out would let an ES256 key and an ES384 request share an
+    entry, which would defeat the pin the caller's docstring describes.
+
+    Args:
+        algorithm: The ES algorithm in use, already allowlisted.
+        x:         The x coordinate, base64url encoded.
+        y:         The y coordinate, base64url encoded.
+
+    Returns:
+        The reconstructed public key, on the curve the algorithm names.
+
+    Raises:
+        InvalidTokenError: A coordinate is not valid base64url.
+        ValueError: The coordinates are not a point on the algorithm's curve.
+    """
     curve_cls, _ = _EC_CURVES[algorithm]
-    x_raw = b64url_decode(_required_member(jwk, "x"))
-    y_raw = b64url_decode(_required_member(jwk, "y"))
     return ec.EllipticCurvePublicNumbers(
-        x=int.from_bytes(x_raw, "big"),
-        y=int.from_bytes(y_raw, "big"),
+        x=int.from_bytes(b64url_decode(x), "big"),
+        y=int.from_bytes(b64url_decode(y), "big"),
         curve=curve_cls(),
     ).public_key()
 
@@ -626,11 +760,110 @@ def decode(
     Nothing the token says about which algorithm to use is honored. `algorithms` is the
     authority, and callers in this library pass exactly one, from `DomainConfig`.
 
+    This is the jose-shaped entry point, for a caller that has already picked a key.
+    `decode_selecting_key` holds the implementation and is what `TokenDecoder` uses, so
+    that a caller holding a whole JWKS does not have to parse the header a second time to
+    find one.
+
     Args:
         token:      The compact serialization to decode.
         jwk:        The key to verify against, already selected by `kid`. Selecting it by
                     the unverified `kid` is safe precisely because that key still has to
                     verify the signature below.
+        algorithms: The permitted algorithms. The token's own `alg` must appear here.
+        audience:   Required audience. When None, `aud` is not checked.
+        issuer:     Required issuer. When None, `iss` is not checked. Compared by exact
+                    string equality against the value the provider published, which is
+                    why `OpenidConfig.issuer` is never normalized.
+        options:    Toggles for individual checks, such as `{"verify_aud": False}`. Only
+                    the keys in `_DEFAULT_OPTIONS` are understood; anything else is
+                    ignored, matching the permissive behavior of the jose-shaped API this
+                    replaces. Setting `verify_signature` False accepts every token and is
+                    a testing switch only.
+        leeway:     Seconds of clock skew tolerated on `exp` and `nbf`.
+
+    Returns:
+        The verified claims, exactly as the payload carried them. No claim is renamed,
+        coerced or added.
+
+    Raises:
+        InvalidTokenError: The token is not a well formed JWS, a segment is not valid
+            base64url or valid JSON, a segment carries `Infinity`, `-Infinity` or `NaN`,
+            the header carries a `crit` member, or `exp`, `nbf` or `iat` is present and is
+            not a finite number in the float range. Maps to 401.
+        InvalidAlgorithmError: The token is an unsecured JWS, carries no `alg`, names an
+            algorithm absent from `algorithms`, or names one whose family does not match
+            the JWK's `kty`. This is the `alg: none` and algorithm-confusion refusal.
+            Maps to 401.
+        InvalidKeyError: The JWK is missing a member its key type requires. Maps to 401,
+            but points at the provider's JWKS rather than at the token.
+        InvalidSignatureError: The signature did not verify against the key. Maps to 401.
+        ExpiredSignatureError: `exp` is in the past, beyond `leeway`. Maps to 401, and is
+            the one failure a well-behaved client should respond to by refreshing its
+            token rather than by treating the request as rejected outright.
+        ImmatureSignatureError: `nbf` is in the future, beyond `leeway`. Maps to 401.
+        InvalidAudienceError: `audience` was required and the token's `aud` is missing or
+            does not contain it. Maps to 401.
+        InvalidIssuerError: `issuer` was required and the token's `iss` is missing or
+            does not match it exactly. Maps to 401.
+    """
+    return decode_selecting_key(
+        token,
+        lambda _header: jwk,
+        algorithms,
+        audience=audience,
+        issuer=issuer,
+        options=options,
+        leeway=leeway,
+    )
+
+
+def decode_selecting_key(
+    token: str,
+    select_key: Callable[[dict[str, Any]], JWK],
+    algorithms: list[str],
+    *,
+    audience: str | None = None,
+    issuer: str | None = None,
+    options: dict[str, bool] | None = None,
+    leeway: float = 0.0,
+) -> dict[str, Any]:
+    """
+    Decode and fully validate a JWT, choosing the key once the header has been read.
+
+    The implementation behind `decode`, and the only one: `decode` is this function with a
+    selector that ignores the header and returns the key it was given.
+
+    The selector exists so that a caller holding a whole JWKS does not have to parse the
+    header itself to find `kid` and then hand the token back to be parsed a second time.
+    It is handed the header THIS function parsed from the token's own bytes, and it returns
+    a key. It never supplies the bytes that key is checked against, which is what keeps the
+    arrangement safe: a caller cannot present one header for key selection and a different
+    one for the signature.
+
+    It is called after the algorithm allowlist and `crit` checks, not before. Key selection
+    used to run ahead of every check, so a token naming `alg: none` and an unknown `kid`
+    reported the missing key and drove an outbound JWKS refetch on behalf of a token that
+    could never have verified. It runs whether or not `verify_signature` is set, so that
+    turning the signature check off does not also turn off the `kid` requirement.
+
+    The order of operations below is a security property, not an implementation detail.
+    In short: structure, then the algorithm from the CALLER's allowlist, then critical
+    headers, then the signature (with the JWK's key type checked against the algorithm
+    family and the ECDSA curve taken from the algorithm rather than from the key), and
+    only then are any claims parsed or trusted. The module docstring sets out each step
+    and the attack it forecloses. Read it before changing anything here.
+
+    Nothing the token says about which algorithm to use is honored. `algorithms` is the
+    authority, and callers in this library pass exactly one, from `DomainConfig`.
+
+    Args:
+        token:      The compact serialization to decode.
+        select_key: Called with the token's parsed but entirely unverified header, and
+                    returns the key to verify with. Choosing a key by the unverified `kid`
+                    is safe precisely because that key still has to verify the signature
+                    below. Anything it raises propagates, which is how `TokenDecoder`
+                    reports an unknown `kid`.
         algorithms: The permitted algorithms. The token's own `alg` must appear here.
         audience:   Required audience. When None, `aud` is not checked.
         issuer:     Required issuer. When None, `iss` is not checked. Compared by exact
@@ -698,13 +931,19 @@ def decode(
             raise InvalidTokenError("Token header 'crit' is not a list")
         raise InvalidTokenError(f"Token header 'crit' names unsupported extensions: {crit}")
 
-    # 4. Signature, before any claim is read. Step 3 of verify_signature also requires the
-    #    JWK's kty to match the algorithm family.
+    # 4. The key, chosen from the header this function parsed and from nothing else. It
+    #    comes after the allowlist check so that a token the route would never accept
+    #    cannot reach a JWKS lookup, and before the `verify_signature` switch so that
+    #    turning the signature check off does not also drop the `kid` requirement.
+    jwk = select_key(header)
+
+    # 5. Signature, before any claim is read. verify_signature also requires the JWK's kty
+    #    to match the algorithm family.
     if opts["verify_signature"]:
         signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
         verify_signature(algorithm, jwk, signing_input, b64url_decode(signature_b64))
 
-    # 5. Only now are the claims worth reading.
+    # 6. Only now are the claims worth reading.
     claims = _decode_json_segment(payload_b64, "payload")
     now = time.time()
 
@@ -761,6 +1000,12 @@ def _sign(algorithm: str, key: bytes | str, signing_input: bytes) -> bytes:
         secret = key.encode() if isinstance(key, str) else key
         digest = getattr(hashlib, f"sha{algorithm[2:]}")
         return hmac.new(secret, signing_input, digest).digest()
+
+    # Imported here rather than at module scope. This is the only place the library needs
+    # it, `_sign` is a testing aid never reached by a request, and importing it eagerly
+    # cost roughly 6.8ms of package import time while dragging in
+    # `serialization.ssh` and its optional bcrypt path.
+    from cryptography.hazmat.primitives import serialization
 
     pem = key.encode() if isinstance(key, str) else key
     private = serialization.load_pem_private_key(pem, password=None)

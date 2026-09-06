@@ -16,6 +16,18 @@ code in it. Everything else in the request path (header unpacking, scope checks,
   to verify a signature, which blocks the classic forgery of signing with HS256 using a
   provider's RSA public key as the HMAC secret.
 - **Unrecognized critical header extensions**, per RFC 7515 section 4.1.11.
+- **Key injection through the token header.** `jku`, `x5u` and an embedded `jwk` are never
+  read. A token cannot nominate the key set, the certificate chain, or the key it would
+  like to be verified against; the key comes from the configured provider's JWKS and
+  nowhere else.
+- **Weak key material in the JWKS.** An RSA modulus below 2048 bits is refused, as RFC 7518
+  section 3.3 requires, and the ECDSA curve is taken from the algorithm rather than from
+  the JWK's `crv`. Both exist for the same reason: strength is decided by what the route
+  agreed to accept, never by what the key material asks for.
+- **Oversized and deeply nested tokens.** A token is capped at 64 KiB before any segment is
+  decoded. The header has to be parsed before the signature can be checked, since `alg`
+  decides what to verify with, so an unauthenticated caller controls a JSON document this
+  library parses, and unbounded array nesting drives the JSON parser into recursion.
 - **Signature verification before claim parsing.** No claim is parsed or trusted until the
   signature over the token has been verified.
 - **Standard claim checks** (`exp`, `nbf`, `aud`, `iss`) with leeway support, and, unlike

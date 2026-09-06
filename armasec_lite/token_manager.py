@@ -138,7 +138,8 @@ class TokenManager:
                 unauthenticated request produces, so it is by far the most common error in
                 the library and is not on its own a sign of an attack.
         """
-        self.debug_logger(f"Attempting to unpack token from headers {headers}")
+        if self.debug_logger is not noop:
+            self.debug_logger(f"Attempting to unpack token from headers {headers}")
         auth_str = headers.get(self.header_key)
         if auth_str is None:
             # A plain dict is case sensitive, unlike starlette's Headers, so fall back to
@@ -147,7 +148,8 @@ class TokenManager:
             auth_str = next(
                 (value for key, value in headers.items() if key.lower() == lowered), None
             )
-        self.debug_logger(f"Got {auth_str} using header key {self.header_key}")
+        if self.debug_logger is not noop:
+            self.debug_logger(f"Got {auth_str} using header key {self.header_key}")
         AuthenticationError.require_condition(
             auth_str,
             f"Could not find auth header at {self.header_key}",

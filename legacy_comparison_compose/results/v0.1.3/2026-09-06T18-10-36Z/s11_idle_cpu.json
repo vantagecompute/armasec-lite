@@ -1,0 +1,609 @@
+{
+  "scenario": "S11",
+  "title": "CPU consumed by an idle container over a quiet window",
+  "question": "Does either arm cost CPU when no request is in flight?",
+  "config": {
+    "window_seconds": 30.0,
+    "traffic": "none, both containers restarted and left alone",
+    "settle_seconds_before_the_window": 5.0,
+    "sample_interval_seconds": 1.0,
+    "both_arms_sampled_across_the_same_wall_clock_window": true,
+    "cgroup_version": "v2",
+    "single_window": "one window per arm, so there is no repetition spread to report",
+    "health_probes_counted": "Docker charges a health probe's CPU to the container it probes, so any probe landing inside the window is counted from the daemon's health log and reported rather than being left inside the figure unannounced"
+  },
+  "measurements": {
+    "legacy": {
+      "cpu_window": {
+        "window_seconds": 30.0013,
+        "usage_usec": 37506,
+        "user_usec": 37386,
+        "system_usec": 120,
+        "cpu_ms": 37.506,
+        "user_ms": 37.386,
+        "system_ms": 0.12,
+        "cores_used": 0.0012501465906531192,
+        "nr_periods": 67,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "cpu_ms_per_second_idle": 1.2501458270141628,
+      "cores_used": 0.0012501465906531192,
+      "health_probes_in_window": 0,
+      "memory_first_bytes": 43065344,
+      "memory_last_bytes": 43065344,
+      "memory_climb_bytes": 0,
+      "anon_first_bytes": 42508288,
+      "anon_last_bytes": 42508288,
+      "anon_climb_bytes": 0,
+      "series": [
+        {
+          "t": 5597194.4818,
+          "cores_used": 0.00104,
+          "cpu_ms": 1.044,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597195.4823,
+          "cores_used": 0.00116,
+          "cpu_ms": 1.157,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597196.4829,
+          "cores_used": 0.00106,
+          "cpu_ms": 1.062,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597197.4834,
+          "cores_used": 0.00102,
+          "cpu_ms": 1.021,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597198.4841,
+          "cores_used": 0.00098,
+          "cpu_ms": 0.983,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597199.4847,
+          "cores_used": 0.00105,
+          "cpu_ms": 1.05,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597200.4853,
+          "cores_used": 0.00107,
+          "cpu_ms": 1.072,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597201.4858,
+          "cores_used": 0.00129,
+          "cpu_ms": 1.286,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597202.4864,
+          "cores_used": 0.00141,
+          "cpu_ms": 1.414,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597203.4869,
+          "cores_used": 0.00135,
+          "cpu_ms": 1.346,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597204.4874,
+          "cores_used": 0.00151,
+          "cpu_ms": 1.506,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597205.4877,
+          "cores_used": 0.00153,
+          "cpu_ms": 1.527,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597206.4881,
+          "cores_used": 0.00147,
+          "cpu_ms": 1.474,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597207.4896,
+          "cores_used": 0.00138,
+          "cpu_ms": 1.385,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597208.4912,
+          "cores_used": 0.00119,
+          "cpu_ms": 1.186,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597209.4916,
+          "cores_used": 0.001,
+          "cpu_ms": 1.003,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597210.4918,
+          "cores_used": 0.001,
+          "cpu_ms": 1.0,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597211.4923,
+          "cores_used": 0.0009,
+          "cpu_ms": 0.902,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597212.4928,
+          "cores_used": 0.00092,
+          "cpu_ms": 0.925,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597213.4933,
+          "cores_used": 0.00091,
+          "cpu_ms": 0.907,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597214.4938,
+          "cores_used": 0.00103,
+          "cpu_ms": 1.034,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597215.4941,
+          "cores_used": 0.00138,
+          "cpu_ms": 1.379,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597216.4945,
+          "cores_used": 0.00106,
+          "cpu_ms": 1.061,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597217.4949,
+          "cores_used": 0.00148,
+          "cpu_ms": 1.477,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597218.4954,
+          "cores_used": 0.00156,
+          "cpu_ms": 1.564,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597219.4959,
+          "cores_used": 0.00144,
+          "cpu_ms": 1.438,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597220.4966,
+          "cores_used": 0.00157,
+          "cpu_ms": 1.567,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597221.4975,
+          "cores_used": 0.00158,
+          "cpu_ms": 1.583,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597222.4984,
+          "cores_used": 0.00175,
+          "cpu_ms": 1.747,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        },
+        {
+          "t": 5597223.4904,
+          "cores_used": 0.00143,
+          "cpu_ms": 1.406,
+          "memory_bytes": 43065344,
+          "anon_bytes": 42508288,
+          "working_set_bytes": 43065344
+        }
+      ]
+    },
+    "lite": {
+      "cpu_window": {
+        "window_seconds": 30.0039,
+        "usage_usec": 39858,
+        "user_usec": 38293,
+        "system_usec": 1564,
+        "cpu_ms": 39.858,
+        "user_ms": 38.293,
+        "system_ms": 1.564,
+        "cores_used": 0.0013284293625109662,
+        "nr_periods": 74,
+        "nr_throttled": 0,
+        "throttled_usec": 0
+      },
+      "cpu_ms_per_second_idle": 1.3284273044504213,
+      "cores_used": 0.0013284293625109662,
+      "health_probes_in_window": 0,
+      "memory_first_bytes": 38866944,
+      "memory_last_bytes": 38866944,
+      "memory_climb_bytes": 0,
+      "anon_first_bytes": 38322176,
+      "anon_last_bytes": 38322176,
+      "anon_climb_bytes": 0,
+      "series": [
+        {
+          "t": 5597194.4819,
+          "cores_used": 0.0011,
+          "cpu_ms": 1.101,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597195.4824,
+          "cores_used": 0.00114,
+          "cpu_ms": 1.142,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597196.4829,
+          "cores_used": 0.00115,
+          "cpu_ms": 1.155,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597197.4835,
+          "cores_used": 0.00118,
+          "cpu_ms": 1.176,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597198.484,
+          "cores_used": 0.00089,
+          "cpu_ms": 0.894,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597199.4845,
+          "cores_used": 0.00107,
+          "cpu_ms": 1.066,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597200.485,
+          "cores_used": 0.00107,
+          "cpu_ms": 1.072,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597201.4854,
+          "cores_used": 0.00127,
+          "cpu_ms": 1.267,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597202.4859,
+          "cores_used": 0.00146,
+          "cpu_ms": 1.459,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597203.4864,
+          "cores_used": 0.00147,
+          "cpu_ms": 1.474,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597204.4869,
+          "cores_used": 0.00137,
+          "cpu_ms": 1.366,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597205.4873,
+          "cores_used": 0.00156,
+          "cpu_ms": 1.557,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597206.4877,
+          "cores_used": 0.00132,
+          "cpu_ms": 1.32,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597207.4892,
+          "cores_used": 0.00192,
+          "cpu_ms": 1.921,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597208.4908,
+          "cores_used": 0.00146,
+          "cpu_ms": 1.461,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597209.4913,
+          "cores_used": 0.00114,
+          "cpu_ms": 1.145,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597210.4917,
+          "cores_used": 0.0011,
+          "cpu_ms": 1.1,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597211.4922,
+          "cores_used": 0.00104,
+          "cpu_ms": 1.045,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597212.4931,
+          "cores_used": 0.00104,
+          "cpu_ms": 1.044,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597213.4938,
+          "cores_used": 0.00092,
+          "cpu_ms": 0.917,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597214.4942,
+          "cores_used": 0.00094,
+          "cpu_ms": 0.94,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597215.4946,
+          "cores_used": 0.00103,
+          "cpu_ms": 1.029,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597216.495,
+          "cores_used": 0.00114,
+          "cpu_ms": 1.144,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597217.4955,
+          "cores_used": 0.00174,
+          "cpu_ms": 1.74,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597218.496,
+          "cores_used": 0.00157,
+          "cpu_ms": 1.569,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597219.4965,
+          "cores_used": 0.00183,
+          "cpu_ms": 1.826,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597220.4972,
+          "cores_used": 0.00167,
+          "cpu_ms": 1.668,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597221.4979,
+          "cores_used": 0.00163,
+          "cpu_ms": 1.631,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597222.4987,
+          "cores_used": 0.0019,
+          "cpu_ms": 1.904,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        },
+        {
+          "t": 5597223.4919,
+          "cores_used": 0.00175,
+          "cpu_ms": 1.725,
+          "memory_bytes": 38866944,
+          "anon_bytes": 38322176,
+          "working_set_bytes": 38866944
+        }
+      ]
+    }
+  },
+  "verdicts": {
+    "idle_cpu": "upstream 0.125% of a core vs armasec-lite 0.133%, over one 30 second window, with 0 and 0 health probes in them"
+  },
+  "provenance": {
+    "timestamp_utc": "2026-09-06T18:10:36+00:00",
+    "hostname": "raton-actions-00",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+    "cpu_count": 8,
+    "memory_total_bytes": 33284620288,
+    "kernel": "6.8.0-134-generic",
+    "operating_system": "Ubuntu 24.04.4 LTS",
+    "docker_version": "29.6.0",
+    "docker_api_version": "1.55",
+    "repetitions": 5,
+    "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+    "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+    "keycloak_repo_digests": [
+      "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+    ],
+    "library_versions": {
+      "legacy": "legacy 3.0.3",
+      "lite": "lite 0.1.3"
+    },
+    "git": {
+      "describe": "v0.1.3-5-g0fb4ecd",
+      "commit": "0fb4ecd62c2e28034afd1f0beb739b7a00ad0535",
+      "branch": "perf/hot-path-and-hardening",
+      "dirty": false
+    },
+    "app_container_limits": {
+      "identical": true,
+      "legacy": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-legacy",
+        "image_id": "sha256:96b33ba20406f698612faf45c571c798c9b8328af954098736772388a056601e"
+      },
+      "lite": {
+        "cpus": 1.0,
+        "cpu_quota": null,
+        "cpu_period": null,
+        "mem_limit_bytes": 536870912,
+        "memswap_limit_bytes": 536870912,
+        "image": "armasec-comparison-app-lite",
+        "image_id": "sha256:27aaa9d40f7c6b5d5cb8719a0389dd965b017599da556d64d8fdf1a668e0dd4c"
+      }
+    },
+    "cgroup": {
+      "version": "v2",
+      "root_mounted_at": "/host/sys/fs/cgroup",
+      "memory_peak_resettable": false
+    },
+    "run_id": "2026-09-06T18-10-36Z",
+    "armasec_lite_version": "0.1.3",
+    "quick_mode": false
+  },
+  "elapsed_seconds": 38.1
+}

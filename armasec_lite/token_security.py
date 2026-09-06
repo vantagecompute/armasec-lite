@@ -327,14 +327,17 @@ class TokenSecurity(APIKeyBase):
         token_permissions = set(token_payload.permissions)
         my_permissions = set(self.scopes or ())
 
-        self.debug_logger(
-            unwrap(
-                f"""
-                Checking my permissions {my_permissions} against token_permissions
-                {token_permissions} using PermissionMode {self.permission_mode}
-                """
+        # Guarded rather than left to the logger to discard: this runs once per request,
+        # and `unwrap` splits and rejoins the whole composed string.
+        if self.debug_logger is not noop:
+            self.debug_logger(
+                unwrap(
+                    f"""
+                    Checking my permissions {my_permissions} against token_permissions
+                    {token_permissions} using PermissionMode {self.permission_mode}
+                    """
+                )
             )
-        )
 
         if self.permission_mode == PermissionMode.ALL:
             AuthorizationError.require_condition(

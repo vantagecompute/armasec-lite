@@ -31,7 +31,11 @@ request, and the JWKS document it fetches to check that token against.
   entry cannot be substituted for a weaker key type than the algorithm demands, and the
   ECDSA coordinate size used to decode a signature is derived from the **algorithm name**,
   never from the JWK's `crv` field, so a hostile JWKS cannot substitute a weaker curve than
-  the algorithm the caller allowed implies.
+  the algorithm the caller allowed implies. The RSA counterpart of that pin is a minimum
+  modulus of 2048 bits, which RFC 7518 section 3.3 requires and which `cryptography` does
+  not enforce on this path: it declines to generate a key below 1024 bits but reconstructs
+  any size at all from public numbers, so without the check a JWKS publishing a 512 bit
+  modulus would be accepted and its signatures would verify.
 - **`jwks_uri`.** It arrives inside a fetched remote document (the OIDC discovery
   document) and determines where key material is fetched from next, so it belongs in this
   list alongside the token and the JWKS contents rather than with the fixed configuration

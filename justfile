@@ -350,6 +350,23 @@ compare-legacy-parity:
 compare-legacy REPS="5" SCENARIOS="s4,s10,s3,s9,s1,s2,s8,s11,footprint,memory,callgraph,profile" QUICK="":
     #!/usr/bin/env bash
     set -euo pipefail
+    # The app images are built from this working tree, so what git says about the tree is
+    # what identifies the code that produced the numbers. The version cannot: it comes from
+    # pyproject.toml and stays put between releases, so without this two runs of two
+    # different commits file under one version and nothing tells them apart. Exported for
+    # docker compose to pass into the bench container, which has no checkout of its own.
+    export HARNESS_GIT_DESCRIBE="$(git describe --tags --always --dirty 2>/dev/null || echo '')"
+    export HARNESS_GIT_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo '')"
+    export HARNESS_GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+    # Dirty is recorded rather than refused. A measurement of an uncommitted tree is still
+    # worth having; a measurement that silently claims to be of the commit it is not is not.
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+        export HARNESS_GIT_DIRTY=true
+        echo "==> WARNING: working tree is dirty; the run will be recorded as such"
+    else
+        export HARNESS_GIT_DIRTY=false
+    fi
+    echo "==> git $HARNESS_GIT_DESCRIBE ($HARNESS_GIT_BRANCH)"
     cd legacy_comparison_compose
     echo "==> building"
     docker compose build

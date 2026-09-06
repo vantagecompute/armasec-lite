@@ -91,6 +91,54 @@ def library_version(provenance: dict[str, Any]) -> str:
     return candidate
 
 
+def git_state(provenance: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Read the git block out of a provenance block, if the run recorded one.
+
+    The version alone cannot say which code a run measured: it comes from `pyproject.toml`
+    and does not move between releases, so two runs of two different commits file under one
+    version directory. The git block is what tells them apart, and it is what the run pages
+    use to say whether a difference against an earlier run is a code change or noise.
+
+    Runs taken before this was added carry no block, which is reported as unknown rather
+    than filled in. Nothing can recover what was not recorded.
+
+    Args:
+        provenance: The provenance block from any result file of the run.
+
+    Returns:
+        The block, with `describe`, `commit`, `branch` and `dirty`, or None when the run
+        recorded none.
+    """
+    block = provenance.get("git")
+    return block if isinstance(block, dict) else None
+
+
+def code_identity(provenance: dict[str, Any]) -> str | None:
+    """
+    Name the exact code a run measured, in one short string.
+
+    Args:
+        provenance: The provenance block from any result file of the run.
+
+    Returns:
+        The git describe string, marked when the tree was dirty, or None when the run
+        recorded no git block. `just compare-legacy` passes `--dirty` to `git describe`, so
+        a dirty tree usually carries its own marker and the suffix here is belt and braces
+        for a describe string produced some other way.
+    """
+    block = git_state(provenance)
+    if block is None:
+        return None
+    describe = block.get("describe") or block.get("commit")
+    if not describe:
+        return None
+    text = str(describe)
+    if block.get("dirty") and not text.endswith("-dirty"):
+        text = f"{text}-dirty"
+    return text
+
+
 def version_directory(provenance: dict[str, Any]) -> str:
     """
     Name the version directory a run belongs in.

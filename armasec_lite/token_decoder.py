@@ -142,14 +142,22 @@ class TokenDecoder:
         """
         Search the current JWKS for a key with the given id.
 
+        Runs once per request, so the per-key log line is guarded by an identity check
+        against `noop` rather than left to the logger to discard. Interpolating a `JWK`
+        expands a pydantic model, which costs several microseconds each, and profiling a
+        warm decode against a six-key JWKS found that one discarded line accounted for
+        more of the request than the RSA signature verification did.
+
         Args:
             kid: The key id from the token's unverified header.
 
         Returns:
             The matching key, or None when the current set has no key with that id.
         """
+        debugging = self.debug_logger is not noop
         for jwk in self.jwks.keys:
-            self.debug_logger(f"Checking key in jwk: {jwk}")
+            if debugging:
+                self.debug_logger(f"Checking key in jwk: {jwk}")
             if jwk.kid == kid:
                 self.debug_logger("Key matches unverified header. Using as decode key.")
                 return jwk
@@ -179,17 +187,17 @@ class TokenDecoder:
 
     def get_decode_key(self, token: str) -> JWK:
         """
-        Find the public key matching a token's `kid`.
+        Find the public key matching a token's `kid`, parsing the header to get it.
+
+        `select_key` does the work; this parses the header first. `decode` no longer calls
+        this, because parsing the header here and then handing the token to
+        `armasec_lite.jwt` meant the header was parsed twice per request. It stays because
+        it is the useful shape for a caller holding only a token, and because it is part of
+        this class's published surface.
 
         The `kid` is read from the unverified header, so it is attacker controlled. It is
         used to select a key and for nothing else; the key then has to actually verify the
         signature.
-
-        A miss is reported, never recovered from here. This method runs on the event loop
-        thread, and recovery means a blocking JWKS refetch. Raising `UnknownKeyIdError`
-        hands that decision to `TokenSecurity`, which refetches from a worker thread and
-        retries once. The error is raised only when a `jwks_refresher` is configured, since
-        without one there is no recovery for a caller to attempt.
 
         Args:
             token: The token whose key should be found.
@@ -209,8 +217,41 @@ class TokenDecoder:
                 be read at all. A subclass of `AuthenticationError`; also 401.
         """
         self.debug_logger("Getting decode key from JWKs")
-        unverified_header = jwt.get_unverified_header(token)
-        self.debug_logger(f"Extracted unverified header: {unverified_header}")
+        return self.select_key(jwt.get_unverified_header(token))
+
+    def select_key(self, unverified_header: dict[str, Any]) -> JWK:
+        """
+        Find the public key named by an already-parsed, still unverified header.
+
+        Passed to `jwt.decode_selecting_key` as the selector, which is what lets a decode
+        parse the header exactly once. `get_decode_key` is the same thing for a caller that
+        has only the token, and parses the header to get here.
+
+        Every value in the header is attacker controlled: it has been through no
+        cryptographic check whatsoever. `kid` is used to select a key and for nothing else;
+        the key then has to actually verify the signature. `alg` is ignored entirely, since
+        the algorithm comes from `DomainConfig`.
+
+        A miss is reported, never recovered from here. This runs on the event loop thread,
+        and recovery means a blocking JWKS refetch. Raising `UnknownKeyIdError` hands that
+        decision to `TokenSecurity`, which refetches from a worker thread and retries once.
+
+        Args:
+            unverified_header: The token's JOSE header, parsed but not verified.
+
+        Returns:
+            The JWK whose `kid` matches the header's. Selecting it proves nothing on its
+            own; the signature check that follows is what decides the token's fate.
+
+        Raises:
+            UnknownKeyIdError: No key in the current set carries the header's `kid`, and a
+                `jwks_refresher` is configured, so a refetch might recover it. Maps to 401
+                if nobody catches it.
+            AuthenticationError: The header has no `kid`, or no key matches it and no
+                refresher is configured. Maps to 401.
+        """
+        if self.debug_logger is not noop:
+            self.debug_logger(f"Extracted unverified header: {unverified_header}")
         kid = unverified_header.get("kid")
         AuthenticationError.require_condition(
             kid,
@@ -266,8 +307,9 @@ class TokenDecoder:
                 misconfiguration rather than a bad request, and a 401 would send the client
                 after the wrong problem.
         """
-        self.debug_logger(f"Attempting to decode '{token}'")
-        self.debug_logger(f"  checking claims: {claims}")
+        if self.debug_logger is not noop:
+            self.debug_logger(f"Attempting to decode '{token}'")
+            self.debug_logger(f"  checking claims: {claims}")
 
         options = {**self.decode_options_override, **claims.pop("options", {})}
 
@@ -275,14 +317,18 @@ class TokenDecoder:
             "Failed to decode token string",
             do_except=partial(log_error, self.debug_logger),
         ):
-            payload_dict = jwt.decode(
+            # `decode_selecting_key` rather than `decode`: it parses the header once and
+            # asks for the key, where `decode` would take a key this method had to parse
+            # the header itself to find, and then parse it again for its own checks.
+            payload_dict = jwt.decode_selecting_key(
                 token,
-                self.get_decode_key(token),
+                self.select_key,
                 [self.algorithm],
                 options=options,
                 **claims,
             )
-            self.debug_logger(f"Raw payload dictionary is {payload_dict}")
+            if self.debug_logger is not noop:
+                self.debug_logger(f"Raw payload dictionary is {payload_dict}")
 
         with PayloadMappingError.handle_errors(
             "Failed to map decoded token to TokenPayload",
@@ -294,9 +340,10 @@ class TokenDecoder:
                     **payload_dict,
                     "permissions": self.permission_extractor(payload_dict),
                 }
-                self.debug_logger(
-                    f"Payload dictionary with extracted permissions is {payload_dict}"
-                )
+                if self.debug_logger is not noop:
+                    self.debug_logger(
+                        f"Payload dictionary with extracted permissions is {payload_dict}"
+                    )
 
             self.debug_logger("Attempting to convert to TokenPayload")
             # Validated from one mapping rather than passed as keyword arguments. A token
@@ -304,7 +351,8 @@ class TokenDecoder:
             # the keyword and raise TypeError, which surfaces as a 500 rather than a 401.
             # Here the real token simply wins.
             token_payload = TokenPayload.model_validate({**payload_dict, "original_token": token})
-            self.debug_logger(f"Built token_payload as {token_payload}")
+            if self.debug_logger is not noop:
+                self.debug_logger(f"Built token_payload as {token_payload}")
             return token_payload
 
 

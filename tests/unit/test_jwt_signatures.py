@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
+from armasec_lite import jwt
 from armasec_lite.jwt import (
     _EC_CURVES,
     SUPPORTED_ALGORITHMS,
@@ -233,3 +234,38 @@ def test_ec_jwk_missing_y_is_refused():
     )
     with pytest.raises(InvalidKeyError, match="'y'"):
         verify_signature("ES256", jwk, SIGNING_INPUT, b"\x00" * 64)
+
+
+def test_public_keys_are_built_once_per_distinct_key(rsa_jwk, ec_jwk):
+    """
+    Reconstructing a public key from JWK members is cached on the key material.
+
+    Rebuilding an RSA key from its numbers cost roughly 10% of a warm decode, and a JWKS
+    changes only on a rotation. The cache is keyed on the base64url members themselves, so
+    two JWKs holding identical material are genuinely the same key and cannot alias each
+    other by accident. For EC the algorithm is part of the key too, since the curve comes
+    from the algorithm rather than from the JWK.
+    """
+    assert jwt._rsa_public_key(rsa_jwk) is jwt._rsa_public_key(rsa_jwk)
+    assert jwt._ec_public_key("ES256", ec_jwk) is jwt._ec_public_key("ES256", ec_jwk)
+
+
+def test_distinct_keys_do_not_share_a_cache_entry(rsa_jwk, attacker_rsa_private):
+    """
+    A second key with different material gets its own object, never the first one's.
+
+    This is the property that makes the cache safe. If it were keyed on anything looser
+    than the material, one JWK could be verified against another's key, which is an
+    authentication bypass rather than a performance bug.
+    """
+    numbers = attacker_rsa_private.public_key().public_numbers()
+    other = JWK.model_validate(
+        {
+            "kty": "RSA",
+            "kid": "rsa-test",
+            "n": b64url_encode(numbers.n.to_bytes(256, "big")),
+            "e": b64url_encode(numbers.e.to_bytes(3, "big")),
+        }
+    )
+    assert jwt._rsa_public_key(rsa_jwk) is not jwt._rsa_public_key(other)
+    assert jwt._rsa_public_key(other).public_numbers().n == numbers.n

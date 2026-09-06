@@ -1,6 +1,6 @@
 {
   "schema": "armasec-lite-comparison-index/1",
-  "generated_utc": "2026-09-05T03:24:26+00:00",
+  "generated_utc": "2026-09-06T18:38:57+00:00",
   "note": "Derived in full from the result files under this directory. Every number here is recomputed from those files whenever the index is rebuilt, so the index is never a second source of truth.",
   "scenario_files": [
     "s1_cold_start",
@@ -16,9 +16,582 @@
     "call_graph",
     "profile_sampling"
   ],
-  "version_count": 1,
-  "run_count": 4,
+  "version_count": 2,
+  "run_count": 5,
   "versions": [
+    {
+      "version": "0.1.3",
+      "directory": "v0.1.3",
+      "run_count": 1,
+      "runs": [
+        {
+          "run_id": "2026-09-06T18-10-36Z",
+          "path": "v0.1.3/2026-09-06T18-10-36Z",
+          "complete": true,
+          "scenarios": [
+            "s1_cold_start",
+            "s2_request_amplification",
+            "s3_warm_flood",
+            "s4_event_loop_blocking",
+            "s8_failing_provider",
+            "s9_cpu_per_request",
+            "s10_cpu_during_cold_load",
+            "s11_idle_cpu",
+            "footprint",
+            "memory",
+            "call_graph",
+            "profile_sampling"
+          ],
+          "missing": [],
+          "provenance": {
+            "timestamp_utc": "2026-09-06T18:10:36+00:00",
+            "hostname": "raton-actions-00",
+            "cpu_model": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+            "cpu_count": 8,
+            "memory_total_bytes": 33284620288,
+            "kernel": "6.8.0-134-generic",
+            "operating_system": "Ubuntu 24.04.4 LTS",
+            "docker_version": "29.6.0",
+            "docker_api_version": "1.55",
+            "repetitions": 5,
+            "keycloak_image": "quay.io/keycloak/keycloak:26.4",
+            "keycloak_image_id": "sha256:135fd1641cb6d9744b6333566f12a26c31c1452664fa897d1c39e760ea2ac611",
+            "keycloak_repo_digests": [
+              "quay.io/keycloak/keycloak@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007"
+            ],
+            "library_versions": {
+              "legacy": "legacy 3.0.3",
+              "lite": "lite 0.1.3"
+            },
+            "git": {
+              "describe": "v0.1.3-5-g0fb4ecd",
+              "commit": "0fb4ecd62c2e28034afd1f0beb739b7a00ad0535",
+              "branch": "perf/hot-path-and-hardening",
+              "dirty": false
+            },
+            "app_container_limits": {
+              "identical": true,
+              "legacy": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-legacy",
+                "image_id": "sha256:96b33ba20406f698612faf45c571c798c9b8328af954098736772388a056601e"
+              },
+              "lite": {
+                "cpus": 1.0,
+                "cpu_quota": null,
+                "cpu_period": null,
+                "mem_limit_bytes": 536870912,
+                "memswap_limit_bytes": 536870912,
+                "image": "armasec-comparison-app-lite",
+                "image_id": "sha256:27aaa9d40f7c6b5d5cb8719a0389dd965b017599da556d64d8fdf1a668e0dd4c"
+              }
+            },
+            "cgroup": {
+              "version": "v2",
+              "root_mounted_at": "/host/sys/fs/cgroup",
+              "memory_peak_resettable": false
+            },
+            "run_id": "2026-09-06T18-10-36Z",
+            "armasec_lite_version": "0.1.3",
+            "quick_mode": false
+          },
+          "verdicts": {
+            "s1_cold_start": {
+              "c1_first_response": "within noise (repetition ranges overlap)",
+              "c1_last_response": "within noise (repetition ranges overlap)",
+              "c2_first_response": "within noise (repetition ranges overlap)",
+              "c2_last_response": "within noise (repetition ranges overlap)",
+              "c4_first_response": "within noise (repetition ranges overlap)",
+              "c4_last_response": "within noise (repetition ranges overlap)",
+              "c8_first_response": "armasec-lite 1.96x lower, ranges disjoint",
+              "c8_last_response": "armasec-lite 2.01x lower, ranges disjoint",
+              "c16_first_response": "within noise (repetition ranges overlap)",
+              "c16_last_response": "within noise (repetition ranges overlap)",
+              "c32_first_response": "within noise (repetition ranges overlap)",
+              "c32_last_response": "armasec-lite 1.80x lower, ranges disjoint",
+              "c64_first_response": "within noise (repetition ranges overlap)",
+              "c64_last_response": "within noise (repetition ranges overlap)"
+            },
+            "s2_request_amplification": {
+              "n0_total_oidc": "within noise (repetition ranges overlap)",
+              "n1_total_oidc": "within noise (repetition ranges overlap)",
+              "n5_total_oidc": "armasec-lite 5.00x lower, ranges disjoint",
+              "n10_total_oidc": "armasec-lite 10.00x lower, ranges disjoint",
+              "n20_total_oidc": "armasec-lite 20.00x lower, ranges disjoint"
+            },
+            "s3_warm_flood": {
+              "100rps_p50_ms": "within noise (repetition ranges overlap)",
+              "100rps_p99_ms": "within noise (repetition ranges overlap)",
+              "100rps_achieved_rps": "within noise (repetition ranges overlap)",
+              "300rps_p50_ms": "within noise (repetition ranges overlap)",
+              "300rps_p99_ms": "armasec-lite 1.31x lower, ranges disjoint",
+              "300rps_achieved_rps": "within noise (repetition ranges overlap)",
+              "600rps_p50_ms": "armasec-lite 1.20x lower, ranges disjoint",
+              "600rps_p99_ms": "within noise (repetition ranges overlap)",
+              "600rps_achieved_rps": "within noise (repetition ranges overlap)",
+              "900rps_p50_ms": "armasec-lite 2.39x lower, ranges disjoint",
+              "900rps_p99_ms": "within noise (repetition ranges overlap)",
+              "900rps_achieved_rps": "within noise (repetition ranges overlap)"
+            },
+            "s4_event_loop_blocking": {
+              "worst_health_latency": "armasec-lite 114.89x lower, ranges disjoint",
+              "health_requests_over_100ms": "lite wins, ranges disjoint (one median is zero, no ratio)",
+              "baseline_p50": "within noise (repetition ranges overlap)"
+            },
+            "s8_failing_provider": {
+              "jwks_fetches": "no winner declared (upstream median 0, armasec-lite median 1): upstream armasec makes zero JWKS fetches here because it never attempts a refetch on an unknown kid at all, which also means it cannot recover from a genuine key rotation without a process restart; armasec-lite makes exactly one bounded fetch across all 60 attacker-chosen unknown key ids, which is the refresh rate limit doing its job"
+            },
+            "s9_cpu_per_request": {
+              "100rps_cpu_ms_per_request": "within noise (repetition ranges overlap)",
+              "100rps_cpu_ms_per_request_idle_corrected": "within noise (repetition ranges overlap)",
+              "100rps_anon_max_bytes": "armasec-lite 1.05x lower, ranges disjoint",
+              "100rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "300rps_cpu_ms_per_request": "armasec-lite 1.12x lower, ranges disjoint",
+              "300rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.12x lower, ranges disjoint",
+              "300rps_anon_max_bytes": "armasec-lite 1.05x lower, ranges disjoint",
+              "300rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "600rps_cpu_ms_per_request": "armasec-lite 1.43x lower, ranges disjoint",
+              "600rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.43x lower, ranges disjoint",
+              "600rps_anon_max_bytes": "armasec-lite 1.05x lower, ranges disjoint",
+              "600rps_anon_climb_bytes": "within noise (repetition ranges overlap)",
+              "900rps_cpu_ms_per_request": "armasec-lite 1.37x lower, ranges disjoint",
+              "900rps_cpu_ms_per_request_idle_corrected": "armasec-lite 1.39x lower, ranges disjoint",
+              "900rps_anon_max_bytes": "within noise (repetition ranges overlap)",
+              "900rps_anon_climb_bytes": "within noise (repetition ranges overlap)"
+            },
+            "s10_cpu_during_cold_load": {
+              "legacy_shape": "upstream armasec: 0.040 cores during the stall against a 0.066 core baseline (below baseline) while /health p99 was 1046ms",
+              "lite_shape": "armasec-lite: 0.056 cores during the stall against a 0.096 core baseline (below baseline) while /health p99 was 4ms",
+              "cores_during_stall": "within noise (repetition ranges overlap)"
+            },
+            "s11_idle_cpu": {
+              "idle_cpu": "upstream 0.125% of a core vs armasec-lite 0.133%, over one 30 second window, with 0 and 0 health probes in them"
+            },
+            "footprint": {
+              "distribution_count": "upstream 41 vs armasec-lite 18"
+            },
+            "memory": {
+              "baseline": "upstream 43.1MB vs armasec-lite 38.9MB"
+            },
+            "call_graph": {
+              "warm_total_calls": "upstream 989 vs armasec-lite 589 per warm request"
+            },
+            "profile_sampling": {
+              "loop_thread_blocked_share": "upstream 12.7% vs armasec-lite 0.0% of loop-thread samples inside a blocking HTTP client"
+            }
+          },
+          "summary": {
+            "s1_cold_start": {
+              "1": {
+                "first_response_ms": {
+                  "legacy": 86.67962532490492,
+                  "lite": 42.61134937405586
+                },
+                "last_response_ms": {
+                  "legacy": 86.67962532490492,
+                  "lite": 42.61134937405586
+                },
+                "p95_ms": {
+                  "legacy": 86.67962532490492,
+                  "lite": 42.61134937405586
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "2": {
+                "first_response_ms": {
+                  "legacy": 82.04833138734102,
+                  "lite": 44.6188198402524
+                },
+                "last_response_ms": {
+                  "legacy": 83.10897368937731,
+                  "lite": 44.716063886880875
+                },
+                "p95_ms": {
+                  "legacy": 83.0559415742755,
+                  "lite": 44.71120168454945
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "4": {
+                "first_response_ms": {
+                  "legacy": 84.90032330155373,
+                  "lite": 48.81753958761692
+                },
+                "last_response_ms": {
+                  "legacy": 87.65248768031597,
+                  "lite": 49.710849300026894
+                },
+                "p95_ms": {
+                  "legacy": 87.54105251282454,
+                  "lite": 49.70162599347532
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "8": {
+                "first_response_ms": {
+                  "legacy": 101.96999553591013,
+                  "lite": 52.015939727425575
+                },
+                "last_response_ms": {
+                  "legacy": 109.85429398715496,
+                  "lite": 54.58292458206415
+                },
+                "p95_ms": {
+                  "legacy": 109.82012785971165,
+                  "lite": 54.556025471538305
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "16": {
+                "first_response_ms": {
+                  "legacy": 56.93648383021355,
+                  "lite": 57.51118343323469
+                },
+                "last_response_ms": {
+                  "legacy": 100.48911720514297,
+                  "lite": 63.531043007969856
+                },
+                "p95_ms": {
+                  "legacy": 100.3917558118701,
+                  "lite": 63.51979938335717
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "32": {
+                "first_response_ms": {
+                  "legacy": 105.5448055267334,
+                  "lite": 80.28460294008255
+                },
+                "last_response_ms": {
+                  "legacy": 152.82952412962914,
+                  "lite": 84.75556503981352
+                },
+                "p95_ms": {
+                  "legacy": 152.79747555032372,
+                  "lite": 84.63534163311124
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "64": {
+                "first_response_ms": {
+                  "legacy": 102.03250218182802,
+                  "lite": 99.52245932072401
+                },
+                "last_response_ms": {
+                  "legacy": 188.26186284422874,
+                  "lite": 109.166637994349
+                },
+                "p95_ms": {
+                  "legacy": 188.22329444810748,
+                  "lite": 109.11940229125321
+                },
+                "oidc_requests_total": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              }
+            },
+            "s2_request_amplification": {
+              "0": {
+                "discovery": {
+                  "legacy": 0.0,
+                  "lite": 0.0
+                },
+                "jwks": {
+                  "legacy": 0.0,
+                  "lite": 0.0
+                },
+                "total_oidc": {
+                  "legacy": 0.0,
+                  "lite": 0.0
+                }
+              },
+              "1": {
+                "discovery": {
+                  "legacy": 1.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 1.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 2.0,
+                  "lite": 2.0
+                }
+              },
+              "5": {
+                "discovery": {
+                  "legacy": 5.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 5.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 10.0,
+                  "lite": 2.0
+                }
+              },
+              "10": {
+                "discovery": {
+                  "legacy": 10.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 10.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 20.0,
+                  "lite": 2.0
+                }
+              },
+              "20": {
+                "discovery": {
+                  "legacy": 20.0,
+                  "lite": 1.0
+                },
+                "jwks": {
+                  "legacy": 20.0,
+                  "lite": 1.0
+                },
+                "total_oidc": {
+                  "legacy": 40.0,
+                  "lite": 2.0
+                }
+              }
+            },
+            "s3_warm_flood": {
+              "100": {
+                "achieved_rps": {
+                  "legacy": 100.04905889731113,
+                  "lite": 100.06962916921536
+                },
+                "p50_ms": {
+                  "legacy": 3.701826371252659,
+                  "lite": 3.051395025104209
+                },
+                "p95_ms": {
+                  "legacy": 4.653487605974327,
+                  "lite": 3.9564150348301284
+                },
+                "p99_ms": {
+                  "legacy": 5.426025043055427,
+                  "lite": 4.648923764005371
+                }
+              },
+              "300": {
+                "achieved_rps": {
+                  "legacy": 299.9369754639071,
+                  "lite": 299.8904083877094
+                },
+                "p50_ms": {
+                  "legacy": 2.3858422413467473,
+                  "lite": 2.4035347811879326
+                },
+                "p95_ms": {
+                  "legacy": 3.1656665323921134,
+                  "lite": 3.15594235497203
+                },
+                "p99_ms": {
+                  "legacy": 4.952440372854573,
+                  "lite": 3.7766777077070186
+                }
+              },
+              "600": {
+                "achieved_rps": {
+                  "legacy": 599.6557777616705,
+                  "lite": 599.7096874196492
+                },
+                "p50_ms": {
+                  "legacy": 2.011560425162262,
+                  "lite": 1.6732405622799096
+                },
+                "p95_ms": {
+                  "legacy": 2.7345459156977725,
+                  "lite": 2.3792234696448533
+                },
+                "p99_ms": {
+                  "legacy": 6.881255113705981,
+                  "lite": 3.5640770805380404
+                }
+              },
+              "900": {
+                "achieved_rps": {
+                  "legacy": 899.3339767881988,
+                  "lite": 899.3483925660153
+                },
+                "p50_ms": {
+                  "legacy": 3.5727504226898965,
+                  "lite": 1.4965383749869776
+                },
+                "p95_ms": {
+                  "legacy": 16.688647259854577,
+                  "lite": 2.5013131399950206
+                },
+                "p99_ms": {
+                  "legacy": 27.234694213296414,
+                  "lite": 6.2666415373482725
+                }
+              }
+            },
+            "s4_event_loop_blocking": {
+              "worst_health_latency_ms": {
+                "legacy": 1069.0729999914765,
+                "lite": 9.305053390562534
+              },
+              "health_p99_during_cold_load_ms": {
+                "legacy": 1057.2588898874817,
+                "lite": 4.428477825597021
+              },
+              "health_requests_over_100ms": {
+                "legacy": 40.0,
+                "lite": 0.0
+              },
+              "health_baseline_p50_ms": {
+                "legacy": 2.260122727602676,
+                "lite": 2.62335296720273
+              }
+            },
+            "s8_failing_provider": {
+              "jwks_fetches_during_flood": {
+                "legacy": 0.0,
+                "lite": 1.0
+              },
+              "unknown_kid_requests_per_repetition": 60
+            },
+            "footprint": {
+              "distribution_count": {
+                "legacy": 41,
+                "lite": 18
+              },
+              "distribution_count_excluding_harness_overhead": {
+                "legacy": 37,
+                "lite": 14
+              },
+              "watched_present": {
+                "legacy": [
+                  "auto-name-enum",
+                  "pluggy",
+                  "py-buzz",
+                  "pytest",
+                  "python-jose",
+                  "respx",
+                  "snick"
+                ],
+                "lite": []
+              }
+            },
+            "memory": {
+              "baseline_idle_bytes": {
+                "legacy": 43061248,
+                "lite": 38871040
+              },
+              "warm_bytes": {
+                "legacy": 44507136,
+                "lite": 42532864
+              },
+              "import_modules_added": {
+                "legacy": 389,
+                "lite": 208
+              },
+              "import_rss_delta_kib": {
+                "legacy": 28656,
+                "lite": 19460
+              }
+            },
+            "call_graph": {
+              "warm_total_calls": {
+                "legacy": 989,
+                "lite": 589
+              },
+              "warm_max_depth": {
+                "legacy": 22,
+                "lite": 17
+              },
+              "warm_calls_auth_library": {
+                "legacy": 57,
+                "lite": 28
+              },
+              "warm_calls_jwt_layer": {
+                "legacy": 44,
+                "lite": 15
+              },
+              "warm_calls_library_and_jwt": {
+                "legacy": 101,
+                "lite": 43
+              },
+              "warm_calls_framework": {
+                "legacy": 117,
+                "lite": 4
+              },
+              "cold_total_calls": {
+                "legacy": 34070,
+                "lite": 4822
+              },
+              "reachable_from_call": {
+                "legacy": 24,
+                "lite": 27
+              }
+            },
+            "profile_sampling": {
+              "loop_thread_samples": {
+                "legacy": 1563,
+                "lite": 1561
+              },
+              "loop_thread_samples_idle_in_selector": {
+                "legacy": 1311,
+                "lite": 1514
+              },
+              "loop_thread_samples_busy": {
+                "legacy": 252,
+                "lite": 47
+              },
+              "loop_thread_samples_in_blocking_http_client": {
+                "legacy": 199,
+                "lite": 0
+              },
+              "worker_thread_samples_in_blocking_http_client": {
+                "legacy": 0,
+                "lite": 198
+              },
+              "worst_health_ms": {
+                "legacy": 1077.2887412458658,
+                "lite": 8.526096493005841
+              },
+              "cold_auth_request_ms": {
+                "legacy": 1075.972487218678,
+                "lite": 1041.7596362531185
+              }
+            }
+          }
+        }
+      ]
+    },
     {
       "version": "0.1.0",
       "directory": "v0.1.0",

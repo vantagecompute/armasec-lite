@@ -8,18 +8,29 @@ sidebar_position: 0
 FastAPI authentication against OIDC providers with the same public API, built almost
 entirely on the Python standard library.
 
-Upstream carries ten runtime dependencies. Two of them (`pytest`, `respx`) are test tools
-forced into every production install. Four more (`snick`, `py-buzz`, `auto-name-enum`,
-`pluggy`) provide small conveniences that the standard library covers directly.
-`armasec-lite` ships two runtime dependencies.
+Upstream carries ten runtime dependencies. `armasec-lite` ships three: `fastapi`,
+`cryptography` and `pydantic`.
 
 ## Dependency reduction
+
+Two of upstream's ten (`pytest`, `respx`) are test tools forced into every production
+install: `armasec==3.0.3` declares `pytest<9,>=6` and `respx` as runtime requirements.
+That is not a tidiness complaint. It is what made this project's own lockfile
+unsatisfiable when we tried to depend on upstream to benchmark against it, on a
+`pytest>=9.1` toolchain. Four more (`snick`, `py-buzz`, `auto-name-enum`, `pluggy`)
+provide small conveniences the standard library covers directly.
+
+`pydantic` is kept rather than dropped because `fastapi` requires it and imports it
+unconditionally, so it is installed and loaded in every deployment regardless of what this
+project declares. Keeping it as a direct dependency preserves `model_dump()`,
+`response_model=` and `except pydantic.ValidationError` for anyone migrating from
+upstream, instead of breaking all three to save zero bytes.
 
 | Upstream dependency | Replacement |
 | --- | --- |
 | `python-jose[cryptography]` | `jwt.py` (stdlib parsing, `cryptography` primitives) |
 | `httpx` | `urllib.request` |
-| `pydantic` | `dataclasses` (`armasec_lite.schemas`) |
+| `pydantic` | **kept**: fastapi requires it, so it costs nothing |
 | `py-buzz` | `exceptions.py` (~50 LOC) |
 | `snick` | `textwrap` |
 | `auto-name-enum` | `enum.Enum` |
