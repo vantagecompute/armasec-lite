@@ -101,7 +101,10 @@ class TokenSecurity(APIKeyBase):
     Attributes:
         domain_configs:   The OIDC domains a token may be authenticated against. A token
                           is accepted if any one of them can decode it.
-        scopes:           Permissions the token must carry, or None to check none.
+        scopes:           Permissions the token must carry, as a frozenset. Empty means
+                          authentication only, with no permission check. Materialized
+                          once at construction because `_check_scopes` runs per request
+                          and must not rebuild it there.
         permission_mode:  How `scopes` is matched. ALL requires every one, SOME requires
                           at least one.
         debug_logger:     A callable such as `logger.debug`. Defaults to `noop`, which
@@ -140,7 +143,10 @@ class TokenSecurity(APIKeyBase):
                               token is accepted if any one of them decodes it.
             scopes:           Optional permission scopes that should be checked. When
                               empty or None, authentication is required but no permission
-                              check is performed.
+                              check is performed. Any iterable of strings is accepted and
+                              materialized into a frozenset here, so a generator is
+                              consumed exactly once instead of silently emptying after
+                              the first request.
             permission_mode:  How the scopes are matched. ALL or SOME.
             debug_logger:     A callable such as `logger.debug`. Defaults to `noop`.
             debug_exceptions: If True, raise original exceptions instead of translating
@@ -149,7 +155,7 @@ class TokenSecurity(APIKeyBase):
             skip_plugins:     If True, do not evaluate plugin validators.
         """
         self.domain_configs = domain_configs
-        self.scopes = scopes
+        self.scopes = frozenset(scopes or ())
         self.permission_mode = permission_mode
 
         self.debug_logger = debug_logger if debug_logger else noop
@@ -324,8 +330,8 @@ class TokenSecurity(APIKeyBase):
                 branch recognizes. Maps to 403: the caller is authenticated, just not
                 allowed.
         """
-        token_permissions = set(token_payload.permissions)
-        my_permissions = set(self.scopes or ())
+        token_permissions = token_payload.permissions
+        my_permissions = self.scopes
 
         # Guarded rather than left to the logger to discard: this runs once per request,
         # and `unwrap` splits and rejoins the whole composed string.

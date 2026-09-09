@@ -41,10 +41,11 @@ upstream, instead of breaking all three to save zero bytes.
 | `fastapi` | kept |
 | (new) | `cryptography` |
 
-## Four differences from upstream
+## Five differences from upstream
 
-`armasec-lite` targets a drop-in migration, but four things differ. Each is covered in
-full on the [migration guide](./migration.md).
+`armasec-lite` targets a drop-in migration, but five things differ. Each is covered in
+full on the [migration guide](./migration.md), which carries the complete, authoritative
+list.
 
 1. **Import name.** The package imports as `armasec_lite`, not `armasec`. The distribution
    name changes too: `armasec-lite`, not `armasec`.
@@ -60,6 +61,13 @@ full on the [migration guide](./migration.md).
    additive and requires no action: the first positional argument is still `JWKs`, so
    every existing construction site is unaffected. It is what lets a JWKS key rotation
    recover without a process restart.
+5. **`TokenPayload.permissions` is a `set[str]`, not a `list[str]`.** Permissions are
+   only ever tested for membership and intersection, so the scope check runs in constant
+   time and a claim repeating a permission collapses into granting it once. Tokens need
+   no changes; pydantic coerces the claim's JSON array. Two things to watch: code that
+   indexes or orders the field, and a handler that returns the payload as its response
+   body, whose `permissions` now serialize into the response JSON in nondeterministic
+   order. Where a stable JSON shape matters, use `to_dict()`, which emits a sorted list.
 
 ## Request flow
 

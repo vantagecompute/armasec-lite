@@ -118,6 +118,31 @@ project combined. It may ship later as a separate `armasec-lite-cli` distributio
 installed alongside `armasec-lite` if you rely on it, or wait for a future
 `armasec-lite-cli`.
 
+## 7. `TokenPayload.permissions` is a `set[str]`
+
+Upstream types `permissions` as `list[str]`. `armasec-lite` types it as `set[str]`,
+because every consumer of the field, the scope check above all, tests membership and
+intersection and never order, and a set makes those checks constant time. Nothing changes
+on the way in: the claim in the token is still a JSON array, pydantic coerces it on
+validation, and a claim that repeats a permission now collapses into granting it once.
+`extract_keycloak_permissions` returns a set as well, matching the field it feeds.
+
+Two things on the way out can break:
+
+- Code that indexes or orders the field (`payload.permissions[0]`, `sorted` assumptions,
+  strict equality against a list) stops working. Compare against a set, or sort
+  explicitly where you need an order.
+- A handler that returns the `TokenPayload` model as its response body now serializes
+  `permissions` in nondeterministic order: JSON has no set type, so the encoder turns the
+  set into a list in iteration order, and set iteration order for strings varies per
+  process. Nothing changes inside your code, where the field is an ordinary Python set;
+  only the JSON a client receives is affected. Anything asserting or diffing that JSON
+  byte-for-byte, such as a snapshot test or a downstream contract test, becomes flaky.
+
+**Fix:** compare permissions with set operations. Where a stable JSON shape matters, use
+`payload.to_dict()`, which deliberately emits `permissions` as a sorted list, or sort the
+field yourself before serializing.
+
 ## Requires no action
 
 A few more differences round out the API diff. None of them breaks anything migrating, so
@@ -172,6 +197,23 @@ message that names neither the domain nor the configuration.
 load a provider, and a `DomainConfig` with an unsupported algorithm could not decode a
 token. `Armasec()` with no domain at all still raises the same 422 it always did.
 
+### `TokenSecurity.scopes` is a frozenset, and `permission_extractor` may return any collection
+
+`TokenSecurity` materializes the `scopes` it is given into a `frozenset` at construction,
+so the per-request scope check rebuilds nothing. The constructor still accepts any
+iterable of strings, exactly as upstream did; only code reading `security.scopes` back
+and expecting the original list or tuple notices. Materializing also means a generator
+passed as `scopes` is consumed once, at construction, instead of silently emptying after
+the first request.
+
+Relatedly, the `permission_extractor` contract widened from returning `list[str]` to
+returning any `Collection[str]`. Every existing extractor that returns a list remains
+valid; pydantic coerces whatever collection comes back into the `permissions` set.
+
+**Why it is safe:** `scopes` was only ever consumed by the scope check, which compares by
+set semantics regardless of input type, and widening an accepted return type breaks no
+existing implementation.
+
 ### `handle_errors` does not re-wrap an error that is already ours
 
 py-buzz's `handle_errors` wraps every exception raised in its block, including one of its
@@ -198,6 +240,7 @@ The tables below are the complete list; nothing above adds to or contradicts the
 | The pytest fixtures live behind the `[test]` extra | A ported test suite cannot import the fixtures from a plain install, because upstream forced `pytest` into every install and this does not | Depend on `armasec-lite[test]` |
 | The OIDC loader cache is process-wide | Tests that expect per-instance provider state now share it | `openid_config_loader.clear_cache()`, or the `mock_openid_server` fixture, which calls it automatically |
 | The CLI is not included | `armasec` console script is gone | Out of scope; see [Security](./security/index.md#what-is-out-of-scope) |
+| `TokenPayload.permissions` is a `set[str]` | Code that indexes or orders the field, compares it to a list, or asserts byte-stable JSON from a handler that returns the payload as its response body (the encoder serializes the set in nondeterministic order) | Use set operations; for a stable JSON shape use `to_dict()`, which emits a sorted list |
 
 **Requires no action, listed so the API diff is complete:**
 
@@ -207,3 +250,4 @@ The tables below are the complete list; nothing above adds to or contradicts the
 | `JWK` no longer requires `n` and `e` | Strictly more permissive; an EC or OKP key that upstream rejected now parses |
 | `DomainConfig` requires a non-empty `domain` and a supported `algorithm` | Neither shape ever worked; the failure just moved from request time to construction time. `Armasec()` with no domain still raises its own 422 |
 | `handle_errors` re-raises an `ArmasecError` subclass unchanged | Everything that is not already ours is still wrapped. Re-wrapping would let the `PayloadMappingError` block turn a genuine 401 into a 500 |
+| `TokenSecurity.scopes` is materialized into a frozenset at construction, and `permission_extractor` may return any `Collection[str]` | The constructor accepts the same iterables it always did, the scope check always compared by set semantics, and widening an accepted return type breaks no existing extractor |

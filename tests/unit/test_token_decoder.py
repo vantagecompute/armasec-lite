@@ -104,7 +104,7 @@ def test_decode_builds_a_token_payload(jwks, rsa_private, now):
     token = _sign(rsa_private, {"sub": "abc", "exp": now + 60, "permissions": ["read:x"]})
     payload = decoder.decode(token)
     assert payload.sub == "abc"
-    assert payload.permissions == ["read:x"]
+    assert payload.permissions == {"read:x"}
     assert payload.original_token == token
 
 
@@ -128,7 +128,7 @@ def test_decode_applies_the_permission_extractor(jwks, rsa_private, now):
             "resource_access": {"my-client": {"roles": ["read:stuff"]}},
         },
     )
-    assert decoder.decode(token).permissions == ["read:stuff"]
+    assert decoder.decode(token).permissions == {"read:stuff"}
 
 
 def test_decode_raises_payload_mapping_error_when_the_extractor_misses(jwks, rsa_private, now):
@@ -168,4 +168,4 @@ def test_decode_restricts_the_algorithm_to_the_configured_one(jwks, rsa_private,
 
 def test_extract_keycloak_permissions_reads_the_nested_roles():
     decoded = {"azp": "my-client", "resource_access": {"my-client": {"roles": ["read:stuff"]}}}
-    assert extract_keycloak_permissions(decoded) == ["read:stuff"]
+    assert extract_keycloak_permissions(decoded) == {"read:stuff"}

@@ -48,7 +48,7 @@ asserts the two sets are equal, so they cannot drift apart silently.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
@@ -269,7 +269,9 @@ class DomainConfig(BaseModel):
         match_keys:           Key/value pairs that must be present in a decoded token.
                               A mismatch raises 403.
         permission_extractor: Optional function that extracts permissions from the
-                              decoded token when they are not a top level claim.
+                              decoded token when they are not a top level claim. May
+                              return any collection of strings; pydantic coerces the
+                              result into `TokenPayload.permissions`, a set.
     """
 
     domain: str
@@ -279,7 +281,7 @@ class DomainConfig(BaseModel):
     use_https: bool = True
     verify_issuer: bool = True
     match_keys: dict[str, Any] = {}
-    permission_extractor: Callable[[dict[str, Any]], list[str]] | None = None
+    permission_extractor: Callable[[dict[str, Any]], Collection[str]] | None = None
 
     @field_validator("domain")
     @classmethod
