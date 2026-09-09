@@ -19,7 +19,7 @@ def test_construction_maps_upstream_aliases():
     )
     assert payload.sub == "abc"
     assert payload.client_id == "my-client"
-    assert payload.permissions == ["read:x"]
+    assert payload.permissions == {"read:x"}
     assert payload.expire == datetime.fromtimestamp(1735689600, tz=UTC)
     assert payload.original_token == "the-token"
 
@@ -32,8 +32,18 @@ def test_construction_accepts_the_unaliased_names():
 
 
 def test_construction_defaults_permissions_to_empty():
-    """`permissions` defaults to an empty list when the claim is absent."""
-    assert TokenPayload(sub="abc").permissions == []
+    """`permissions` defaults to an empty set when the claim is absent."""
+    assert TokenPayload(sub="abc").permissions == set()
+
+
+def test_permissions_coerce_from_a_list_and_collapse_duplicates():
+    """A `permissions` claim arrives as a JSON array; validation coerces it to a set.
+
+    A token repeating a permission grants it once, which is what the scope check
+    always meant anyway.
+    """
+    payload = TokenPayload(sub="abc", permissions=["read:x", "read:x", "write:x"])
+    assert payload.permissions == {"read:x", "write:x"}
 
 
 def test_construction_requires_sub():
@@ -59,7 +69,7 @@ def test_unknown_attribute_raises_attribute_error():
 def test_extra_does_not_shadow_declared_fields():
     """A declared field always wins over any same-named extra claim."""
     payload = TokenPayload(sub="abc", permissions=["a"])
-    assert payload.permissions == ["a"]
+    assert payload.permissions == {"a"}
     assert "permissions" not in (payload.model_extra or {})
 
 
@@ -72,6 +82,16 @@ def test_to_dict_matches_the_upstream_shape():
         "exp": 1735689600,
         "client_id": "my-client",
     }
+
+
+def test_to_dict_emits_permissions_as_a_sorted_list():
+    """`to_dict` renders the permissions set as a sorted list.
+
+    The shim exists to reproduce upstream's JSON-friendly shape, and a set is
+    neither JSON-serializable nor deterministically ordered.
+    """
+    payload = TokenPayload(sub="abc", permissions=["b", "a", "c"])
+    assert payload.to_dict()["permissions"] == ["a", "b", "c"]
 
 
 def test_to_dict_without_an_expiry_omits_the_timestamp():

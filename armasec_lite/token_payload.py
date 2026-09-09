@@ -19,6 +19,21 @@ The consequence worth keeping in mind is that an attribute that is present on on
 provider's tokens may be absent on another's, and the model will not tell you in advance.
 Read unknown claims with `getattr(payload, name, default)`.
 
+### `permissions` is a set
+
+Upstream armasec typed `permissions` as a list. Here it is a `set[str]`, because every
+consumer of the field, the scope check above all, tests membership and intersection and
+never order, and a set makes those checks constant time instead of linear. Pydantic
+coerces the JSON array in the token's claim on validation, so duplicates collapse and
+issuers need not change anything. Only code that indexed or ordered `payload.permissions`
+notices; `to_dict` still emits a sorted list, keeping the compatibility shim's shape.
+
+The consumer-visible caveat is serialization order. In code the field is an ordinary
+Python set, but when a handler returns the payload as its response body, the JSON encoder
+turns the set into a list in iteration order, which for strings varies per process. A
+snapshot test or downstream contract asserting that JSON byte-for-byte becomes flaky.
+Where a stable shape matters, return `to_dict()` or sort the field before serializing.
+
 ### Aliases
 
 `expire` and `client_id` accept two source names each, via `AliasChoices`: the registered
@@ -55,9 +70,14 @@ class TokenPayload(BaseModel):
                         The only required field.
         permissions:    The permissions the token grants, checked against a route's
                         scopes. Read from a top level `permissions` claim, or produced by
-                        a `permission_extractor` for providers that nest them. Defaults to
-                        empty, so a token with no permissions authenticates but authorizes
-                        nothing.
+                        a `permission_extractor` for providers that nest them. A set,
+                        deliberately: permissions are only ever tested for membership and
+                        intersection, never for order, and validation collapses a claim
+                        that repeats a permission into granting it once. Serializing the
+                        payload renders the set in nondeterministic order; where a stable
+                        shape matters, use `to_dict`, which emits a sorted list. Defaults
+                        to empty, so a token with no permissions authenticates but
+                        authorizes nothing.
         expire:         The "exp" (or "expire") claim, as a datetime. Informational here:
                         expiry was already enforced during decoding, so a payload in hand
                         is not expired.
@@ -70,7 +90,7 @@ class TokenPayload(BaseModel):
     """
 
     sub: str
-    permissions: list[str] = Field(default_factory=list)
+    permissions: set[str] = Field(default_factory=set)
     expire: datetime | None = Field(None, validation_alias=AliasChoices("exp", "expire"))
     client_id: str | None = Field(None, validation_alias=AliasChoices("azp", "client_id"))
     original_token: str | None = None
@@ -87,12 +107,15 @@ class TokenPayload(BaseModel):
         `exp` again. Prefer reading attributes off the model directly.
 
         Returns:
-            A dictionary with `sub`, `permissions`, `exp` and `client_id`. `exp` is None
-            when the token carried no expiry.
+            A dictionary with `sub`, `permissions`, `exp` and `client_id`. `permissions`
+            is a sorted list rather than the set on the model, because the shim's whole
+            point is upstream's JSON-friendly shape and a set is neither
+            JSON-serializable nor deterministically ordered. `exp` is None when the token
+            carried no expiry.
         """
         return {
             "sub": self.sub,
-            "permissions": self.permissions,
+            "permissions": sorted(self.permissions),
             "exp": int(self.expire.timestamp()) if self.expire is not None else None,
             "client_id": self.client_id,
         }

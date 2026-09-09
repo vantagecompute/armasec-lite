@@ -95,6 +95,18 @@ def _security(**kwargs):
     return TokenSecurity(**kwargs)
 
 
+def test_scopes_are_precomputed_as_a_frozenset():
+    """Construction materializes `scopes` into a frozenset once.
+
+    `_check_scopes` runs per request, so the set must not be rebuilt there. Materializing
+    also means a generator passed as `scopes` is consumed exactly once, at construction,
+    instead of silently emptying after the first request.
+    """
+    security = _security(scopes=(scope for scope in ["read:x", "read:x", "write:x"]))
+    assert security.scopes == frozenset({"read:x", "write:x"})
+    assert isinstance(security.scopes, frozenset)
+
+
 async def test_call_returns_the_token_payload(fake_get, make_token):
     security = _security()
     payload = await security(_Request({"Authorization": f"Bearer {make_token()}"}))

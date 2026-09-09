@@ -41,7 +41,7 @@ are what draw the line.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from functools import partial
 from typing import Any
 
@@ -86,7 +86,7 @@ class TokenDecoder:
         algorithm: str = "RS256",
         debug_logger: Callable[..., None] | None = None,
         decode_options_override: dict[str, Any] | None = None,
-        permission_extractor: Callable[[dict[str, Any]], list[str]] | None = None,
+        permission_extractor: Callable[[dict[str, Any]], Collection[str]] | None = None,
         jwks_refresher: Callable[[], JWKs] | None = None,
     ):
         """
@@ -103,6 +103,9 @@ class TokenDecoder:
                                      See the `armasec_lite.jwt` module docstring.
             permission_extractor:    Optional function that extracts permissions from the
                                      decoded token when they are not a top level claim.
+                                     It may return any collection of strings: a list, set
+                                     or tuple all validate, since pydantic coerces the
+                                     result into `TokenPayload.permissions`, a set.
 
                                      Consider the example token:
 
@@ -356,7 +359,7 @@ class TokenDecoder:
             return token_payload
 
 
-def extract_keycloak_permissions(decoded_token: dict[str, Any]) -> list[str]:
+def extract_keycloak_permissions(decoded_token: dict[str, Any]) -> set[str]:
     """
     Extract permissions from a Keycloak token.
 
@@ -374,7 +377,8 @@ def extract_keycloak_permissions(decoded_token: dict[str, Any]) -> list[str]:
     }
     ```
 
-    this extractor returns `["read:stuff"]`.
+    this extractor returns `{"read:stuff"}`. A set rather than a list, matching the
+    `TokenPayload.permissions` field it feeds; Keycloak roles carry no meaningful order.
 
     Pass it as `DomainConfig(permission_extractor=extract_keycloak_permissions)`. It is
     called only after the signature has verified, so the claims it reads are trustworthy.
@@ -393,4 +397,4 @@ def extract_keycloak_permissions(decoded_token: dict[str, Any]) -> list[str]:
             configuration mistake, not a bad token.
     """
     resource_key = decoded_token["azp"]
-    return list(decoded_token["resource_access"][resource_key]["roles"])
+    return set(decoded_token["resource_access"][resource_key]["roles"])
