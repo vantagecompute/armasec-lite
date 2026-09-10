@@ -86,6 +86,16 @@ jobs:
         working-directory: docusaurus
         run: npm ci
 
+      # `npm ci` is lockfile-exact by design, so the caret range on
+      # @vantagecompute/docusaurus-theme alone would never pick up a newer 0.5.x:
+      # the site would sit on whatever the lockfile was last regenerated against.
+      # This takes the newest release matching the declared range, so a theme
+      # patch reaches every spoke on its next deploy with no lockfile commit. The
+      # lockfile change stays on the runner; nothing is written back to the repo.
+      - name: Take the newest theme release in range
+        working-directory: docusaurus
+        run: npm update --no-save @vantagecompute/docusaurus-theme
+
       - name: Build docs
         working-directory: docusaurus
         run: npm run build
