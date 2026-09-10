@@ -25,25 +25,6 @@
  * purpose, and check the built CSS afterwards.
  */
 
-/* ── GitHub button ────────────────────────────────────────────────── */
-/* The theme styles no navbar buttons of its own, so this is additive rather
-   than an override, and applies regardless of injection order. */
-.github-button {
-  background-color: var(--vantage-button) !important;
-  color: white !important;
-  border-radius: 6px;
-  padding: 8px 16px;
-  margin: 0 4px;
-  border: none;
-  font-weight: 500;
-  text-decoration: none;
-}
-.github-button:hover {
-  background-color: #9084ff !important;
-  color: white !important;
-  text-decoration: none;
-}
-
 /* ── Mermaid ──────────────────────────────────────────────────────── */
 /* Several of the sequence diagrams here are wide enough to need horizontal
    scroll on a laptop, and the page body must never scroll sideways. */
