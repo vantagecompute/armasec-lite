@@ -498,6 +498,8 @@ class TokenSecurity(APIKeyBase):
             domain_config.algorithm,
             debug_logger=self.debug_logger,
             permission_extractor=domain_config.permission_extractor,
+            claim_locations=domain_config.claim_locations,
+            required_claims=domain_config.required_claims,
             jwks_refresher=loader.refresh_jwks,
         )
         return TokenManager(

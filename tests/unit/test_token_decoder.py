@@ -138,6 +138,92 @@ def test_decode_raises_payload_mapping_error_when_the_extractor_misses(jwks, rsa
         decoder.decode(token)
 
 
+def test_decode_resolves_claim_locations_through_the_audience_placeholder(jwks, rsa_private, now):
+    decoder = TokenDecoder(
+        jwks,
+        claim_locations={
+            "permissions": ("resource_access", "{audience}", "permission_roles"),
+            "application_roles": ("resource_access", "{audience}", "application_roles"),
+        },
+    )
+    token = _sign(
+        rsa_private,
+        {
+            "sub": "abc",
+            "exp": now + 60,
+            "aud": "my-cluster",
+            "azp": "token-broker",
+            "resource_access": {
+                "my-cluster": {
+                    "permission_roles": ["read:stuff"],
+                    "application_roles": ["kubernetes:admin"],
+                }
+            },
+        },
+    )
+    payload = decoder.decode(token, audience="my-cluster")
+    assert payload.permissions == {"read:stuff"}
+    # Undeclared on TokenPayload, reachable because the model allows extras.
+    assert payload.application_roles == ["kubernetes:admin"]
+
+
+def test_decode_resolves_claim_locations_through_the_azp_placeholder(jwks, rsa_private, now):
+    decoder = TokenDecoder(
+        jwks, claim_locations={"permissions": ("resource_access", "{azp}", "roles")}
+    )
+    token = _sign(
+        rsa_private,
+        {
+            "sub": "abc",
+            "exp": now + 60,
+            "azp": "my-client",
+            "resource_access": {"my-client": {"roles": ["read:stuff"]}},
+        },
+    )
+    assert decoder.decode(token).permissions == {"read:stuff"}
+
+
+def test_decode_leaves_an_unresolved_claim_location_at_its_default(jwks, rsa_private, now):
+    decoder = TokenDecoder(
+        jwks, claim_locations={"permissions": ("resource_access", "{audience}", "nope")}
+    )
+    token = _sign(rsa_private, {"sub": "abc", "exp": now + 60, "resource_access": {}})
+    assert decoder.decode(token).permissions == set()
+
+
+def test_decode_raises_payload_mapping_error_when_a_required_claim_misses(jwks, rsa_private, now):
+    decoder = TokenDecoder(
+        jwks,
+        claim_locations={"permissions": ("resource_access", "{audience}", "permission_roles")},
+        required_claims={"permissions"},
+    )
+    token = _sign(rsa_private, {"sub": "abc", "exp": now + 60, "aud": "my-cluster"})
+    with pytest.raises(PayloadMappingError):
+        decoder.decode(token, audience="my-cluster")
+
+
+def test_decode_lets_the_permission_extractor_win_over_a_claim_location(jwks, rsa_private, now):
+    decoder = TokenDecoder(
+        jwks,
+        claim_locations={"permissions": ("resource_access", "{audience}", "permission_roles")},
+        permission_extractor=extract_keycloak_permissions,
+    )
+    token = _sign(
+        rsa_private,
+        {
+            "sub": "abc",
+            "exp": now + 60,
+            "aud": "my-cluster",
+            "azp": "my-client",
+            "resource_access": {
+                "my-client": {"roles": ["from:extractor"]},
+                "my-cluster": {"permission_roles": ["from:location"]},
+            },
+        },
+    )
+    assert decoder.decode(token, audience="my-cluster").permissions == {"from:extractor"}
+
+
 def test_decode_honors_the_options_override(jwks, rsa_private, now):
     decoder = TokenDecoder(jwks, decode_options_override={"verify_exp": False})
     token = _sign(rsa_private, {"sub": "abc", "exp": now - 60})

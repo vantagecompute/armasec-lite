@@ -256,6 +256,39 @@ class DomainConfig(BaseModel):
     anything else is refused before a key is touched. Configure the one algorithm the
     provider actually signs with.
 
+    `claim_locations` is the declarative form of `permission_extractor`, and covers the
+    case that motivates almost every extractor anyone writes: the value is in the token,
+    just not at the top level. Each entry names a field to set on the `TokenPayload` and
+    the path of keys to read it from.
+
+    Two placeholders are substituted into a path segment at decode time, because the key
+    naming the client is not a constant: `{audience}` becomes this config's `audience`,
+    and `{azp}` becomes the token's own `azp` claim. A provider that nests a client's
+    roles under the audience rather than under `azp` is then pure configuration:
+
+    ```
+    DomainConfig(
+        domain="auth.example.com",
+        audience="my-cluster",
+        claim_locations={
+            "permissions": ("resource_access", "{audience}", "permission_roles"),
+            "application_roles": ("resource_access", "{audience}", "application_roles"),
+        },
+        required_claims={"permissions"},
+    )
+    ```
+
+    A path that does not resolve -- a missing key, a non-mapping part way down, or an
+    unresolvable placeholder -- leaves the field unset, so `TokenPayload` applies its own
+    default and a claim the provider simply did not issue is not an error. Name the field
+    in `required_claims` to get the opposite: a miss is a `PayloadMappingError` and a 500,
+    the same contract a `permission_extractor` that does not match the token has always
+    had. `permissions` is the usual member, since a token that grants nothing authorizes
+    nothing and that is more often a misconfigured path than a real answer.
+
+    `claim_locations` is applied before `permission_extractor`, so the two can coexist
+    while a caller migrates and the callable wins on `permissions`.
+
     Attributes:
         domain:               The OIDC domain from which resources are loaded.
         audience:             Optional designation of the token audience.
@@ -272,6 +305,11 @@ class DomainConfig(BaseModel):
                               decoded token when they are not a top level claim. May
                               return any collection of strings; pydantic coerces the
                               result into `TokenPayload.permissions`, a set.
+        claim_locations:      Where to find claims that are nested rather than top level,
+                              as target field name to a path of claim keys. See below.
+        required_claims:      Target field names from `claim_locations` whose path must
+                              resolve. A miss raises `PayloadMappingError`, a 500, rather
+                              than leaving the field at its default.
     """
 
     domain: str
@@ -282,6 +320,8 @@ class DomainConfig(BaseModel):
     verify_issuer: bool = True
     match_keys: dict[str, Any] = {}
     permission_extractor: Callable[[dict[str, Any]], Collection[str]] | None = None
+    claim_locations: dict[str, tuple[str, ...]] = {}
+    required_claims: set[str] = set()
 
     @field_validator("domain")
     @classmethod
