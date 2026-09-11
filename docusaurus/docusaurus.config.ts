@@ -1,6 +1,6 @@
 import type {Config} from '@docusaurus/types';
 import {themes as prismThemes} from 'prism-react-renderer';
-import {staticDir, getProjectVersion, navbarLogo, footerLogo} from '@vantagecompute/docusaurus-theme';
+import {staticDir, getProjectVersion} from '@vantagecompute/docusaurus-theme';
 import * as path from 'path';
 
 // From the theme rather than hand-rolled here, so every Vantage site advertises its
@@ -43,7 +43,21 @@ const config: Config = {
     hooks: {onBrokenMarkdownLinks: 'warn'},
   },
 
-  themes: ['@docusaurus/theme-mermaid', '@vantagecompute/docusaurus-theme'],
+  // The theme renders the navbar and (no) footer itself. This site is a
+  // developer spoke, so it gets the developer navbar: brand mark, centred
+  // title and version, the button below, and the colour-mode toggle. There is
+  // no themeConfig.navbar and no footer; both belong to the theme.
+  themes: [
+    '@docusaurus/theme-mermaid',
+    [
+      '@vantagecompute/docusaurus-theme',
+      {
+        navbarLinks: [
+          {label: 'GitHub', url: 'https://github.com/vantagecompute/armasec-lite'},
+        ],
+      },
+    ],
+  ],
   staticDirectories: ['static', staticDir],
 
   presets: [
@@ -111,65 +125,9 @@ const config: Config = {
 
   customFields: {
     projectVersion,
-    // No `custom-authNavbarItem` here. vdeployer registers that from its own
-    // docusaurus/src/theme + OIDC contexts, not from @vantagecompute/docusaurus-theme,
-    // so referencing it without that local implementation fails the build with
-    // "No NavbarItem component found for type". This site has no gated content, so it
-    // has no login. Port vdeployer's src/{theme,contexts,components} if that changes.
   },
 
   themeConfig: {
-    navbar: {
-      // The version belongs in the tagline, which is where every other Vantage site
-      // carries it. A navbar title that grows a git-describe suffix between releases
-      // reflows the header on every commit.
-      title: 'armasec-lite',
-      logo: navbarLogo,
-      items: [
-        {type: 'docSidebar', sidebarId: 'docsSidebar', position: 'left', label: 'Docs'},
-        {to: '/api-reference/', label: 'API Reference', position: 'left'},
-        {
-          href: 'https://github.com/vantagecompute/armasec-lite',
-          label: 'GitHub',
-          position: 'right',
-          className: 'github-button',
-        },
-      ],
-    },
-    footer: {
-      style: 'dark',
-      logo: footerLogo,
-      links: [
-        {
-          title: 'Documentation',
-          items: [
-            {label: 'Overview', to: '/'},
-            {label: 'Installation', to: '/installation'},
-            {label: 'Quickstart', to: '/quickstart'},
-            {label: 'Migration', to: '/migration'},
-            {label: 'Architecture', to: '/architecture/'},
-            {label: 'Security', to: '/security/'},
-            {label: 'API Reference', to: '/api-reference/'},
-            {label: 'Contributing', to: '/contributing'},
-          ],
-        },
-        {
-          title: 'Community',
-          items: [
-            {label: 'Issues', href: 'https://github.com/vantagecompute/armasec-lite/issues'},
-            {label: 'Support', href: 'https://vantagecompute.ai/support'},
-          ],
-        },
-        {
-          title: 'More',
-          items: [
-            {label: 'GitHub', href: 'https://github.com/vantagecompute/armasec-lite'},
-            {label: 'Vantage Compute', href: 'https://vantagecompute.ai'},
-          ],
-        },
-      ],
-      copyright: `Copyright © ${new Date().getFullYear()} Vantage Compute.`,
-    },
     codeBlock: {showCopyButton: true},
     prism: {
       theme: prismThemes.vsLight,
