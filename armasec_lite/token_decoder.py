@@ -87,6 +87,8 @@ class TokenDecoder:
         debug_logger: Callable[..., None] | None = None,
         decode_options_override: dict[str, Any] | None = None,
         permission_extractor: Callable[[dict[str, Any]], Collection[str]] | None = None,
+        claim_locations: dict[str, tuple[str, ...]] | None = None,
+        required_claims: set[str] | None = None,
         jwks_refresher: Callable[[], JWKs] | None = None,
     ):
         """
@@ -128,6 +130,23 @@ class TokenDecoder:
                                          resource_key = decoded_token["azp"]
                                          return decoded_token["resource_access"][resource_key]["roles"]
                                      ```
+            claim_locations:         Optional mapping of a field to set on the payload to
+                                     the path of claim keys holding it, for claims that
+                                     are nested rather than top level. The declarative
+                                     form of `permission_extractor`: the example above
+                                     becomes
+                                     `{"permissions": ("resource_access", "{azp}",
+                                     "roles")}` with no function to write. `{azp}` and
+                                     `{audience}` are substituted per token, from the
+                                     token's own `azp` claim and from the `audience`
+                                     passed to `decode`. An unresolved path leaves the
+                                     field unset unless it is named in `required_claims`.
+                                     Applied before `permission_extractor`, which wins on
+                                     `permissions` when both are configured.
+            required_claims:         Field names from `claim_locations` whose path must
+                                     resolve, raising `PayloadMappingError` when it does
+                                     not. Everything else is optional, so a claim the
+                                     provider does not issue is not an error.
             jwks_refresher:          Optional callable returning a freshly fetched JWKs.
                                      Invoked only by `refresh_keys`, which the caller runs
                                      after `get_decode_key` reports an unknown `kid`. It
@@ -139,6 +158,8 @@ class TokenDecoder:
         self.debug_logger = debug_logger if debug_logger else noop
         self.decode_options_override = decode_options_override if decode_options_override else {}
         self.permission_extractor = permission_extractor
+        self.claim_locations = claim_locations if claim_locations else {}
+        self.required_claims = required_claims if required_claims else set()
         self.jwks_refresher = jwks_refresher
 
     def _find_key(self, kid: str) -> JWK | None:
@@ -275,6 +296,61 @@ class TokenDecoder:
 
         raise AuthenticationError("Could not find a matching jwk")
 
+    def _resolve_claim_locations(
+        self,
+        payload_dict: dict[str, Any],
+        audience: str | None,
+    ) -> dict[str, Any]:
+        """
+        Read each configured claim location out of a decoded token.
+
+        Walks every path in `claim_locations`, substituting `{audience}` and `{azp}` into
+        a segment before using it as a key. Returns only the fields that resolved, so the
+        caller can merge the result over the payload and leave the rest at their defaults.
+
+        Args:
+            payload_dict: The decoded, signature-verified claims.
+            audience:     The audience this domain is configured with, for `{audience}`.
+                          None when the domain ignores audience, which makes any path
+                          using the placeholder unresolvable.
+
+        Returns:
+            The fields whose paths resolved, ready to merge over the payload.
+
+        Raises:
+            KeyError: A path named in `required_claims` did not resolve. `decode` calls
+                this inside its `PayloadMappingError` block, so it surfaces as a 500: a
+                path that does not match the provider's tokens is a configuration
+                mistake, the same judgement `permission_extractor` has always had.
+        """
+        placeholders = {"audience": audience, "azp": payload_dict.get("azp")}
+        resolved: dict[str, Any] = {}
+        for field, path in self.claim_locations.items():
+            cursor: Any = payload_dict
+            for segment in path:
+                key = (
+                    placeholders.get(segment[1:-1])
+                    if segment.startswith("{") and segment.endswith("}")
+                    else segment
+                )
+                if key is None or not isinstance(cursor, dict) or key not in cursor:
+                    cursor = None
+                    break
+                cursor = cursor[key]
+            if cursor is None:
+                if field in self.required_claims:
+                    raise KeyError(
+                        f"claim_locations path {path!r} for required field {field!r} "
+                        "did not resolve in the decoded token"
+                    )
+                if self.debug_logger is not noop:
+                    self.debug_logger(
+                        f"claim location {path} for {field} did not resolve; skipping"
+                    )
+                continue
+            resolved[field] = cursor
+        return resolved
+
     def decode(self, token: str, **claims: Any) -> TokenPayload:
         """
         Decode a JWT into a TokenPayload, checking signatures and claims.
@@ -315,6 +391,10 @@ class TokenDecoder:
             self.debug_logger(f"  checking claims: {claims}")
 
         options = {**self.decode_options_override, **claims.pop("options", {})}
+        # Read before `claims` is handed to the decode call below, which consumes it.
+        # `audience` is what `TokenManager` passes down from `DomainConfig`, so this is
+        # the same value a `{audience}` placeholder in `claim_locations` should mean.
+        audience = claims.get("audience")
 
         with AuthenticationError.handle_errors(
             "Failed to decode token string",
@@ -337,6 +417,15 @@ class TokenDecoder:
             "Failed to map decoded token to TokenPayload",
             do_except=partial(log_error, self.debug_logger),
         ):
+            if self.claim_locations:
+                self.debug_logger("Attempting to resolve claim locations.")
+                payload_dict = {
+                    **payload_dict,
+                    **self._resolve_claim_locations(payload_dict, audience),
+                }
+                if self.debug_logger is not noop:
+                    self.debug_logger(f"Payload dictionary with resolved claims is {payload_dict}")
+
             if self.permission_extractor is not None:
                 self.debug_logger("Attempting to extract permissions.")
                 payload_dict = {
