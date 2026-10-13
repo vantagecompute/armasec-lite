@@ -15,20 +15,25 @@ env:
 jobs:
   check:
     name: lint · test
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.USE_SELF_HOSTED_RUNNERS == 'true' && fromJSON(vars.SELF_HOSTED_RUNS_ON || '{"group":"vantage-eng","labels":["X64"]}') || 'ubuntu-26.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      # The uv cache syncs only on GitHub-hosted runners: a self-hosted runner keeps
+      # its own on local disk.
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: ${{ env.UV_VERSION }}
           python-version: '3.12'
-          enable-cache: true
+          enable-cache: ${{ runner.environment == 'github-hosted' }}
 
       # The runner image ships no `just`. The official installer needs no marketplace
-      # action or version pin beyond the script's own TLS pin.
+      # action or version pin beyond the script's own TLS pin. It installs into the
+      # job's temp dir, which a self-hosted runner (no root) can write to.
       - name: Install just
-        run: curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Install workspace
         run: uv sync --all-groups
