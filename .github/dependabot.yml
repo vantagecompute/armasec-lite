@@ -1,0 +1,15 @@
+# Dependency bumps arrive as reviewed pull requests. The docs workflows build
+# from the committed lockfile only, so this is how a new
+# @vantagecompute/docusaurus-theme release reaches the site.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /docusaurus
+    commit-message:
+      prefix: chore
+      include: scope
+    schedule:
+      interval: weekly
+    groups:
+      docs-deps:
+        patterns: ["*"]
