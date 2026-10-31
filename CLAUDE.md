@@ -182,7 +182,7 @@ done
 
 # Generate and read the reference. It is the actual deliverable, and building it is the
 # only way to catch heading collisions and layout problems.
-cd docusaurus && npm ci && npm run build && ls docs/api-reference/
+cd docusaurus && yarn install --immutable && yarn build && ls docs/api-reference/
 ```
 
 **Read the built output, do not just check that the build passed.** Two defects in this

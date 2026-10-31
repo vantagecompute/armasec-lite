@@ -23,3 +23,8 @@ docs/api-reference/
 # is no site.
 docs/benchmarks/
 static/charts/
+
+# Yarn 4 (the release comes from the packageManager pin, so nothing under .yarn is committed)
+.yarn/*
+!.yarn/patches
+.pnp.*
