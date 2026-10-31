@@ -236,23 +236,23 @@ local-token:
 
 # Docusaurus dev server with live reload. `just docs-dev 3100` to pick a port.
 docs-dev PORT=DOCS_PORT:
-    cd docusaurus && npm install && npm run start -- --port {{PORT}}
+    cd docusaurus && yarn install && yarn start --port {{PORT}}
 
 # The SDK reference and the benchmark pages are both regenerated as part of this: the pydoc
-# plugin writes the reference from docstrings and npm's `prebuild` hook runs
+# plugin writes the reference from docstrings and the build script first runs
 # scripts/generate_benchmarks.py over the committed results. Neither is committed, so a
 # build is the only way either exists.
 
 # Build the static site into docusaurus/build.
 docs-build:
-    cd docusaurus && npm install && PYDOC_PYTHON="$(uv python find 3.14)" npm run build
+    cd docusaurus && yarn install && PYDOC_PYTHON="$(uv python find 3.14)" yarn build
 
 # Useful when checking that a renamed module still appears. The plugin parses the source
 # with `ast` and imports nothing, so this needs no virtualenv and no dependencies.
 
 # Regenerate the SDK reference alone, without building the site.
 docs-sdk:
-    cd docusaurus && npm install && PYDOC_PYTHON="$(uv python find 3.14)" npm run gen-sdk-docs
+    cd docusaurus && yarn install && PYDOC_PYTHON="$(uv python find 3.14)" yarn gen-sdk-docs
 
 # The benchmark pages and their figure specs are generated the same way the SDK reference
 # is: written at build time from committed data, never committed themselves. The data is
@@ -312,11 +312,11 @@ docs-verify: docs-build docs-diagrams
 
 # Serve the built site locally. Takes a port for the same reason as docs-dev.
 docs-serve PORT=DOCS_PORT:
-    cd docusaurus && npm run serve -- --port {{PORT}}
+    cd docusaurus && yarn serve --port {{PORT}}
 
 # Type-check the Docusaurus config and sidebars.
 docs-typecheck:
-    cd docusaurus && npm install && npm run typecheck
+    cd docusaurus && yarn install && yarn typecheck
 
 # --- comparison harness --------------------------------------------------------------
 
@@ -395,17 +395,17 @@ infra-test:
 # able to rewrite the roles that authorise it.
 
 cdk-synth ENV="dev":
-    cd infra && uv run npx -y aws-cdk@2 synth 'VantageAi*-{{ENV}}' -c env={{ENV}}
+    cd infra && uv run yarn dlx -q aws-cdk@2.1146.1 synth 'VantageAi*-{{ENV}}' -c env={{ENV}}
 
 cdk-diff ENV="dev":
-    cd infra && uv run npx -y aws-cdk@2 diff 'VantageAi*-{{ENV}}' -c env={{ENV}}
+    cd infra && uv run yarn dlx -q aws-cdk@2.1146.1 diff 'VantageAi*-{{ENV}}' -c env={{ENV}}
 
 cdk-deploy ENV="dev":
     # --require-approval never matches deploy.yml. Without it CDK stops for an
     # interactive confirmation on any IAM change and simply fails where there is no
     # TTY, so a security-relevant change becomes the one kind you cannot deploy
     # locally. `just cdk-diff ENV` is the review step; run it first.
-    cd infra && uv run npx -y aws-cdk@2 deploy 'VantageAi*-{{ENV}}' -c env={{ENV}} \
+    cd infra && uv run yarn dlx -q aws-cdk@2.1146.1 deploy 'VantageAi*-{{ENV}}' -c env={{ENV}} \
         --require-approval never
 
 # One-time bootstrap: creates the GitHub Actions OIDC deploy roles. Run this by hand with
@@ -415,12 +415,12 @@ cdk-deploy-cicd:
     # Same reason as cdk-deploy: this stack is nothing but IAM, so CDK always stops
     # for a confirmation it cannot get without a TTY. `just cdk-diff-cicd` is the
     # review step.
-    cd infra && uv run npx -y aws-cdk@2 deploy VantageAiCicd --exclusively \
+    cd infra && uv run yarn dlx -q aws-cdk@2.1146.1 deploy VantageAiCicd --exclusively \
         --require-approval never
 
 # What the deploy role is allowed to do, for review before creating it.
 cdk-diff-cicd:
-    cd infra && uv run npx -y aws-cdk@2 diff VantageAiCicd --exclusively
+    cd infra && uv run yarn dlx -q aws-cdk@2.1146.1 diff VantageAiCicd --exclusively
 
 
 # --- release -------------------------------------------------------------------------
@@ -503,7 +503,8 @@ release version:
             continue
         sub(p, r'version="[0-9][^"]*"', f'version="{version}"')
 
-    # npm rejects a PEP 440 pre-release, so the marker is rewritten into semver's form.
+    # package.json versions are semver, which rejects a PEP 440 pre-release, so the
+    # marker is rewritten into semver's form.
     # The docs site is unpublished and its version is cosmetic, but leaving it behind
     # would make it the one component that disagrees, which is exactly the confusion
     # this recipe exists to prevent.
@@ -523,10 +524,9 @@ release version:
             print(f"  {f}", file=sys.stderr)
         raise SystemExit(1)
 
-    print(f"  bumped {len(changed)} files to {version} (npm form: {npm})")
+    print(f"  bumped {len(changed)} files to {version} (semver form: {npm})")
     PY
 
-    (cd docusaurus && npm install --package-lock-only --silent >/dev/null 2>&1) || true
 
     # Verify before committing, the same reason v8x builds before it tags: a release branch
     # that does not pass its own gates wastes a review cycle to discover it.
