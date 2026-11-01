@@ -40,6 +40,11 @@ concurrency:
 
 jobs:
   deploy:
+    # Only main or a release tag may publish. workflow_dispatch can be started from
+    # any branch, and this job assumes the spoke role and runs `s3 sync --delete`
+    # on the live site, so without this guard anyone able to push a branch could
+    # publish unreviewed docs.
+    if: github.ref == 'refs/heads/main' || github.ref_type == 'tag'
     runs-on: ${{ vars.USE_SELF_HOSTED_RUNNERS == 'true' && fromJSON(vars.SELF_HOSTED_RUNS_ON || '{"group":"vantage-eng","labels":["X64"]}') || 'ubuntu-26.04' }}
     steps:
       # The pydoc plugin comes from the npm registry, so there is no submodule to check out and no
