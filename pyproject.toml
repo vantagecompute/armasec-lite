@@ -11,7 +11,7 @@ maintainers = [{name = "Vantage Compute", email = "info@vantagecompute.ai"}]
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 keywords = [
     "fastapi",
     "auth",
@@ -32,8 +32,7 @@ classifiers = [
     "Intended Audience :: System Administrators",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Framework :: FastAPI",
     "Framework :: Pytest",
     "Topic :: Internet :: WWW/HTTP",
@@ -101,7 +100,7 @@ line-length = 100
 extend-exclude = ["docusaurus/vendor", "docs/superpowers", ".worktrees"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 
 [build-system]

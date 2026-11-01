@@ -454,7 +454,7 @@ def provenance(docker: Docker, versions: dict[str, str], reps: int) -> dict[str,
         cgroups["memory_peak_resettable"] = cgroup.Reader(
             docker.container_id("app-legacy")
         ).reset_peak()
-    except (RuntimeError, OSError):
+    except RuntimeError, OSError:
         cgroups["memory_peak_resettable"] = None
 
     return {

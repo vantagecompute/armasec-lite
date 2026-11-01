@@ -10,10 +10,10 @@ import * as path from 'path';
 const projectVersion = getProjectVersion();
 
 // The generator parses the source with `ast` and never imports it, so it needs an
-// interpreter that can merely parse Python 3.12 syntax, not one able to import the
-// project's dependencies. `python3` is the right default here: this project requires
-// 3.12+, not the 3.14 that vantage-mcp-infra pins, so there is no syntax this repo can
-// write that a normal system `python3` cannot parse.
+// interpreter that can merely parse Python 3.14 syntax, not one able to import the
+// project's dependencies. The project requires 3.14+, so an older system `python3` may
+// not parse it: `just docs-build` passes uv's 3.14 in PYDOC_PYTHON and CI sets up 3.14
+// before the build. `python3` is only the fallback when PYDOC_PYTHON is unset.
 const pydocPython = process.env.PYDOC_PYTHON ?? 'python3';
 
 const config: Config = {

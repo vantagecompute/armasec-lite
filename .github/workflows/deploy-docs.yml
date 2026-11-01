@@ -71,10 +71,10 @@ jobs:
       # the source with `ast` and never imports it. So this needs an interpreter able to
       # parse the project's syntax, but deliberately not its dependencies or its
       # virtualenv -- which is why there is no `uv sync` here. armasec-lite requires
-      # Python 3.12+, so 3.12 is enough.
+      # Python 3.14+, so 3.14 is enough.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       # No package-manager cache: Yarn 4 is installed after this step,
       # too late for setup-node to cache it, and the docs install is quick.

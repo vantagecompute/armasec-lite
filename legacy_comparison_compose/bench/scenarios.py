@@ -158,7 +158,7 @@ async def fetch(
             await writer.drain()
             status_line = await reader.readline()
             body = await reader.read()
-    except (TimeoutError, OSError, asyncio.IncompleteReadError):
+    except TimeoutError, OSError, asyncio.IncompleteReadError:
         return 0, b""
     finally:
         if writer is not None:
@@ -480,7 +480,7 @@ def wait_healthy(arm: Arm, timeout: float = 90.0) -> float:
             ) as response:
                 if response.status == 200:
                     return time.perf_counter() - started
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except urllib.error.URLError, TimeoutError, OSError:
             pass
         time.sleep(0.05)
     raise RuntimeError(f"{arm.name} did not become healthy within {timeout}s")

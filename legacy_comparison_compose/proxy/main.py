@@ -211,14 +211,14 @@ def _control(path: str, query: dict[str, list[str]], body: bytes) -> bytes | Non
     if path == "/__latency":
         try:
             STATE["latency_ms"] = max(0, int(fields.get("ms", 0)))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return _respond(400, {"error": "ms must be an integer"})
         return _respond(200, {"latency_ms": STATE["latency_ms"]})
     if path == "/__fault":
         try:
             STATE["fault_status"] = int(fields.get("status", 0))
             STATE["fault_remaining"] = int(fields.get("count", 0)) if STATE["fault_status"] else 0
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return _respond(400, {"error": "status and count must be integers"})
         STATE["fault_path"] = str(fields.get("path", "") or "") if STATE["fault_status"] else ""
         return _respond(
@@ -339,7 +339,7 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
 
         writer.write(response)
         await writer.drain()
-    except (ConnectionError, asyncio.IncompleteReadError, IndexError):
+    except ConnectionError, asyncio.IncompleteReadError, IndexError:
         pass
     finally:
         writer.close()

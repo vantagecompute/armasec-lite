@@ -10,7 +10,7 @@
 # nothing from the library under test. It measures both arms from outside, over the
 # network, exactly as any other client would.
 
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.14
 FROM python:${PYTHON_VERSION}-slim
 
 ENV PYTHONUNBUFFERED=1 \

@@ -4,7 +4,7 @@ Injectable FastAPI authentication against OIDC providers. A dependency-minimal
 reimplementation of [armasec](https://github.com/omnivector-solutions/armasec) 3.x with the
 same public API.
 
-Import package `armasec_lite`, distribution `armasec-lite`, Python 3.12+.
+Import package `armasec_lite`, distribution `armasec-lite`, Python 3.14+.
 
 Runtime dependencies are exactly three: `fastapi`, `cryptography`, `pydantic`. Adding a
 fourth is a design change, not a routine edit. `tests/unit/test_packaging.py` enforces both
