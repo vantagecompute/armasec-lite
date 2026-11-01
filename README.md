@@ -11,7 +11,7 @@
 Injectable FastAPI auth via OIDC, with three dependencies instead of ten.
 
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://python.org)
+[![Python](https://img.shields.io/badge/python-3.14+-blue.svg)](https://python.org)
 [![PyPI](https://img.shields.io/pypi/v/armasec-lite.svg)](https://pypi.org/project/armasec-lite/)
 ![Build Status](https://img.shields.io/github/actions/workflow/status/vantagecompute/armasec-lite/release.yml?branch=main&label=build&logo=github&style=plastic)
 ![GitHub Issues](https://img.shields.io/github/issues/vantagecompute/armasec-lite?label=issues&logo=github&style=plastic)

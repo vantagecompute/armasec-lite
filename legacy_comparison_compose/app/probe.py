@@ -344,7 +344,7 @@ def collect_functions(roots: list[str]) -> tuple[dict[str, set[str]], int, int]:
                 try:
                     with open(path, encoding="utf-8") as handle:
                         sources.append((path, ast.parse(handle.read())))
-                except (SyntaxError, UnicodeDecodeError, OSError):
+                except SyntaxError, UnicodeDecodeError, OSError:
                     continue
 
     defined: set[str] = set()

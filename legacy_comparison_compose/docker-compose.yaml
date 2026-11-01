@@ -98,7 +98,7 @@ services:
     mem_limit: 1536m
 
   oidc-proxy:
-    image: python:3.12-slim
+    image: python:3.14-slim
     command: ["python", "-u", "/srv/main.py"]
     environment:
       PROXY_LISTEN_PORT: "8080"
