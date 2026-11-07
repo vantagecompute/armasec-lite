@@ -4566,18 +4566,18 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@vantagecompute/docusaurus-plugin-pydoc@npm:^0.1.1":
-  version: 0.1.2
-  resolution: "@vantagecompute/docusaurus-plugin-pydoc@npm:0.1.2"
+"@vantagecompute/docusaurus-plugin-pydoc@npm:^0.1.3":
+  version: 0.1.3
+  resolution: "@vantagecompute/docusaurus-plugin-pydoc@npm:0.1.3"
   peerDependencies:
     "@docusaurus/core": ^3.0.0
-  checksum: 10c0/8bdc3feac1f9d5803e618019322bb43098194b7a564f404c3b98e4e7f11225284eea4ecd7b5ffe38b51d3e7c4ad7e322d8756a862f58d9617a2f49b9a5b8b80a
+  checksum: 10c0/0d6ee832f35c366ceecd32402b0da80ed820ee6d652a544d0553b983a9d3d4a5c35ffc110cf73fdd204171b695fbb0d5ec5060dc941bf3cb7c2df478384141f4
   languageName: node
   linkType: hard
 
-"@vantagecompute/docusaurus-theme@npm:^0.5.0":
-  version: 0.5.6
-  resolution: "@vantagecompute/docusaurus-theme@npm:0.5.6"
+"@vantagecompute/docusaurus-theme@npm:^0.5.7":
+  version: 0.5.7
+  resolution: "@vantagecompute/docusaurus-theme@npm:0.5.7"
   dependencies:
     clsx: "npm:^2.1.1"
     unist-util-visit: "npm:^5.1.0"
@@ -4588,10 +4588,7 @@ __metadata:
     "@docusaurus/theme-mermaid": ^3.0.0
     react: ^18.0.0 || ^19.0.0
     react-dom: ^18.0.0 || ^19.0.0
-  peerDependenciesMeta:
-    "@docusaurus/theme-mermaid":
-      optional: true
-  checksum: 10c0/bbc1acf0aeee1263242c44b435bbd9e7bec3c94d10a036f688fcdf1e84a9a75cdae2f8065087f8c5e034dea65fc3e885e922762b0a2a2bce340afca8e5c13c0d
+  checksum: 10c0/43764aa70cd2a5f339f890ccaf3ecdc90c0339c3fce0eec4e2f7a4f0d1f8b45e20a4e9954dd694dd4cd7cb4af7efce518d7a77b4512bea182a431d1e8d0efe3b
   languageName: node
   linkType: hard
 
@@ -5011,12 +5008,12 @@ __metadata:
     "@docusaurus/tsconfig": "npm:^3.10.2"
     "@docusaurus/types": "npm:^3.10.2"
     "@mdx-js/react": "npm:^3.1.1"
-    "@vantagecompute/docusaurus-plugin-pydoc": "npm:^0.1.1"
-    "@vantagecompute/docusaurus-theme": "npm:^0.5.0"
+    "@vantagecompute/docusaurus-plugin-pydoc": "npm:^0.1.3"
+    "@vantagecompute/docusaurus-theme": "npm:^0.5.7"
     clsx: "npm:^2.1.1"
     docusaurus-plugin-llms: "npm:^0.6.0"
     plotly.js: "npm:plotly.js-cartesian-dist-min@^4.0.0"
-    plotly.js-cartesian-dist-min: "npm:^4.0.0"
+    plotly.js-cartesian-dist-min: "npm:^4.2.0"
     prism-react-renderer: "npm:^2.4.1"
     react: "npm:^19.2.8"
     react-dom: "npm:^19.2.8"
@@ -10666,7 +10663,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"plotly.js-cartesian-dist-min@npm:^4.0.0, plotly.js@npm:plotly.js-cartesian-dist-min@^4.0.0":
+"plotly.js-cartesian-dist-min@npm:^4.2.0":
+  version: 4.2.0
+  resolution: "plotly.js-cartesian-dist-min@npm:4.2.0"
+  checksum: 10c0/339b55a86c5c6977542c5887dbaf023a154f52fb7f43bfb02eba23ed89b8dd38b514fc804176db96b0d2c1097409b5ef7b8f25e7ecc3868acf63fdf52ac5c8db
+  languageName: node
+  linkType: hard
+
+"plotly.js@npm:plotly.js-cartesian-dist-min@^4.0.0":
   version: 4.1.2
   resolution: "plotly.js-cartesian-dist-min@npm:4.1.2"
   checksum: 10c0/552959e33876890e32163a22ca8b1b8552e7d0537ff47a46572d28a8a910450fa3fa58cc27d349cf1d295babcd54e7db881c9fd51c56e1a51e7bd0388d576450
