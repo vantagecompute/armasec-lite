@@ -5013,7 +5013,7 @@ __metadata:
     clsx: "npm:^2.1.1"
     docusaurus-plugin-llms: "npm:^0.6.0"
     plotly.js: "npm:plotly.js-cartesian-dist-min@^4.0.0"
-    plotly.js-cartesian-dist-min: "npm:^4.2.0"
+    plotly.js-cartesian-dist-min: "npm:^4.3.0"
     prism-react-renderer: "npm:^2.4.1"
     react: "npm:^19.2.8"
     react-dom: "npm:^19.2.8"
@@ -10663,10 +10663,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"plotly.js-cartesian-dist-min@npm:^4.2.0":
-  version: 4.2.0
-  resolution: "plotly.js-cartesian-dist-min@npm:4.2.0"
-  checksum: 10c0/339b55a86c5c6977542c5887dbaf023a154f52fb7f43bfb02eba23ed89b8dd38b514fc804176db96b0d2c1097409b5ef7b8f25e7ecc3868acf63fdf52ac5c8db
+"plotly.js-cartesian-dist-min@npm:^4.3.0":
+  version: 4.3.0
+  resolution: "plotly.js-cartesian-dist-min@npm:4.3.0"
+  checksum: 10c0/3b6979f48e0a89c01ec485d521207e12fe281932c9129bd783d0dec8ae749eaf1351a2af616a0ab520526914cc973ce6fd55493c97a54a59a86d7f3484a5767f
   languageName: node
   linkType: hard
 
